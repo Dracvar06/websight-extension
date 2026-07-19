@@ -67,6 +67,27 @@ voice out, and it can click, focus or fill things when you ask.
 Change the hotkey at `chrome://extensions/shortcuts` if it clashes with your
 screen reader.
 
+## Neural voices (optional, recommended)
+
+The system voices vary a lot by language. For natural speech in every
+language, run the bundled neural TTS server (Kokoro + Piper via Speaches,
+all local and free):
+
+1. One-time setup is already done in `tts-server/` (a Python venv and the
+   voice models, ~400 MB, all inside this folder).
+2. The server starts automatically at login and restarts itself if it
+   crashes, via the LaunchAgent at
+   `~/Library/LaunchAgents/com.websight.tts-server.plist` (the one WebSight
+   file outside this folder; it logs to `tts-server/server.log`). To remove
+   it: `launchctl bootout gui/$(id -u)/com.websight.tts-server` and delete
+   the plist. To run manually instead: `./run-tts-server.sh`.
+3. In Settings, set Voice engine to "Neural local server" and press
+   Test neural voice.
+
+English/Spanish/French/Italian/Portuguese/Hindi/Japanese/Chinese use Kokoro,
+Catalan uses Piper (veu "ona"). Languages without a neural voice fall back to
+the system voices automatically, as does everything if the server is down.
+
 ## How it works
 
 Hotkey opens the popup, which records your question (Web Speech API). The

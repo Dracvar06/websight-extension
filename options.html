@@ -97,9 +97,20 @@
     <button type="button" id="test-voice">Test voice</button>
     <p class="note" id="rate-note">Many screen reader users prefer 2x or faster.</p>
 
-    <label for="voiceName">Voice for answers</label>
+    <label for="ttsEngine">Voice engine</label>
+    <select id="ttsEngine" aria-describedby="tts-note">
+      <option value="system">System voices - instant, quality varies by language</option>
+      <option value="neural">Neural local server - natural in every language, free and private</option>
+    </select>
+    <label for="ttsUrl">Neural voice server address</label>
+    <input type="text" id="ttsUrl">
+    <button type="button" id="test-tts">Test neural voice</button>
+    <p class="note" id="tts-status" role="status" aria-live="polite"></p>
+    <p class="note" id="tts-note">The neural engine needs run-tts-server.sh running (from the project folder). English, Spanish, Catalan, French, Italian, Portuguese, Hindi, Japanese and Chinese sound natural; other languages fall back to system voices automatically.</p>
+
+    <label for="voiceName">Voice for answers (system engine only)</label>
     <select id="voiceName" aria-describedby="voice-note"></select>
-    <p class="note" id="voice-note">Automatic picks a system voice matching the answer's language, which can land on a low-quality one. If the voice sounds bad, choose a specific voice here and use Test voice to preview it. Tip: install nicer system voices under macOS Settings, Accessibility, Spoken Content, then reopen this page.</p>
+    <p class="note" id="voice-note">Automatic picks a system voice matching the answer's language, avoiding the low-quality novelty ones. Tip: install nicer system voices under macOS Settings, Accessibility, Spoken Content, then reopen this page.</p>
 
     <label for="speechEngine">Speech recognition engine</label>
     <select id="speechEngine" aria-describedby="engine-note">

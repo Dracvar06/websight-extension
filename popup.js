@@ -93,6 +93,7 @@ async function ask(question) {
     const res = await chrome.runtime.sendMessage({ type: 'websight-ask', question });
     if (res && res.answer) {
       addLine('AI', res.answer);
+      if (res.note) addLine('Details', res.note);
       if (res.error && res.detail) addLine('Details', res.detail);
       setStatus(res.error ? 'There was a problem.' : 'Press Talk or Alt+Shift+S to ask again.', res.error ? 'error' : '');
     } else {

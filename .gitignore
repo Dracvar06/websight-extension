@@ -2,3 +2,5 @@
 *.log
 # Local Whisper models are big; download via run-whisper-server.sh instructions
 models/
+# Neural TTS server: cloned speaches repo, its venv, and downloaded voice models
+tts-server/

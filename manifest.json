@@ -3,7 +3,7 @@
   "name": "WebSight - AI sighted friend",
   "description": "Talk to an AI that sees the page and describes it, like a sighted friend sitting next to you.",
   "version": "0.1.0",
-  "permissions": ["activeTab", "scripting", "storage", "tabs", "tts", "declarativeNetRequest"],
+  "permissions": ["activeTab", "scripting", "storage", "tabs", "tts", "declarativeNetRequest", "offscreen"],
   "host_permissions": ["<all_urls>"],
   "declarative_net_request": {
     "rule_resources": [

@@ -3,6 +3,7 @@
 # always-on server at http://localhost:58765 does the same job).
 # Needs whisper.cpp (brew install whisper-cpp). Reuses Vowen's model to avoid
 # a duplicate 1.5 GB download; drops back to models/ if you add a copy there.
+export PATH="/opt/homebrew/bin:$PATH"
 cd "$(dirname "$0")"
 MODEL="$HOME/Library/Application Support/vowen/models/ggml-large-v3-turbo.bin"
 [ -f "models/ggml-large-v3-turbo.bin" ] && MODEL="models/ggml-large-v3-turbo.bin"

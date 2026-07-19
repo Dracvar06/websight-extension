@@ -15,6 +15,8 @@ const DEFAULT_SETTINGS = {
   speechLang: 'auto',
   voiceName: '',
   autoDescribe: true,
+  ttsEngine: 'system',
+  ttsUrl: 'http://localhost:8100/v1',
 };
 
 // Element texts that require a spoken confirmation before acting.
@@ -52,7 +54,35 @@ async function pickVoice(lang) {
   return (preferred || pool[0]).voiceName;
 }
 
+async function ensureOffscreen() {
+  const contexts = await chrome.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'] });
+  if (contexts.length) return;
+  await chrome.offscreen.createDocument({
+    url: 'offscreen.html',
+    reasons: ['AUDIO_PLAYBACK'],
+    justification: 'Play neural text-to-speech audio for spoken answers',
+  });
+}
+
 async function speak(text, { lang, rate, enqueue = false, voiceName } = {}) {
+  const settings = await getSettings();
+  if (settings.ttsEngine === 'neural') {
+    try {
+      await ensureOffscreen();
+      const res = await chrome.runtime.sendMessage({
+        type: 'websight-tts-play',
+        text,
+        lang: lang || 'en',
+        rate: rate || settings.rate,
+        enqueue,
+        url: settings.ttsUrl,
+      });
+      if (res && res.ok) return;
+      // No neural voice for this language: fall through to the system voice.
+    } catch {
+      /* offscreen unavailable: fall through to the system voice */
+    }
+  }
   const options = { rate: rate || 1.4, enqueue };
   // A user-chosen voice always wins; otherwise pick a decent voice for the
   // answer language rather than letting Chrome land on a novelty voice.
@@ -269,6 +299,7 @@ async function handleAsk(question) {
   }
 
   let result;
+  let fallbackNote = '';
   try {
     result = await provider.ask({
       history: state.history,
@@ -277,6 +308,30 @@ async function handleAsk(question) {
       screenshotBase64,
     });
   } catch (err) {
+    // Quota exhausted or service overloaded: quietly try the backup
+    // providers so the user is never stranded mid-day.
+    if (err.status === 429 || err.status === 503) {
+      for (const name of ['deepseek', 'ollama']) {
+        if (name === settings.provider) continue;
+        if (name === 'deepseek' && !settings.deepseekKey) continue;
+        const backup = getProvider({ ...settings, provider: name });
+        try {
+          result = await backup.ask({
+            history: state.history,
+            question,
+            pageText: extraction.pageText,
+            screenshotBase64: backup.vision ? screenshotBase64 : '',
+          });
+          fallbackNote = `Answered by the ${backup.label} backup because ${provider.label} is at its limit or overloaded.`;
+          break;
+        } catch {
+          /* backup unavailable too; try the next one */
+        }
+      }
+    }
+    if (result) {
+      // A backup saved the day; continue with its answer.
+    } else {
     let msg = `I could not reach ${provider.label}. Check your internet connection.`;
     if (provider.name === 'ollama' && !err.status) {
       msg = 'I could not reach Ollama. Make sure the Ollama app is running on this computer.';
@@ -293,8 +348,9 @@ async function handleAsk(question) {
     } else if (err.status === 400 || err.status === 401 || err.status === 403) {
       msg = `${provider.label} rejected the request. Check the API key in settings with Test connection.`;
     }
-    speak(msg, { rate: settings.rate, voiceName: settings.voiceName });
-    return { answer: msg, error: true, detail: err.detail || String(err) };
+      speak(msg, { rate: settings.rate, voiceName: settings.voiceName });
+      return { answer: msg, error: true, detail: err.detail || String(err) };
+    }
   }
 
   // Keep history light: text only, no screenshots, last 8 exchanges.
@@ -308,7 +364,7 @@ async function handleAsk(question) {
   if (!result.action) {
     await setTabState(tab.id, state);
     speak(result.answer, { lang: result.lang, rate: settings.rate, voiceName: settings.voiceName });
-    return { answer: result.answer };
+    return { answer: result.answer, note: fallbackNote || undefined };
   }
 
   const target = extraction.elements.find((e) => e.index === result.action.index);
@@ -362,6 +418,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
   if (msg.type === 'websight-stop-speech') {
     chrome.tts.stop();
+    chrome.runtime.sendMessage({ type: 'websight-tts-stop' }).catch(() => {});
+    sendResponse({ ok: true });
+    return false;
+  }
+  if (msg.type === 'websight-tts-failed') {
+    // The neural server failed mid-utterance; recover with the system voice.
+    chrome.tts.speak(msg.text, { rate: msg.rate || 1.4 });
     sendResponse({ ok: true });
     return false;
   }

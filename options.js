@@ -13,6 +13,8 @@ const DEFAULTS = {
   rate: 1.4,
   voiceName: '',
   autoDescribe: true,
+  ttsEngine: 'system',
+  ttsUrl: 'http://localhost:8100/v1',
   speechEngine: 'browser',
   speechLang: 'auto',
   whisperUrl: 'https://api.groq.com/openai/v1',
@@ -21,7 +23,7 @@ const DEFAULTS = {
 };
 
 const el = {};
-for (const id of ['provider', 'geminiKey', 'geminiModel', 'deepseekKey', 'deepseekModel', 'ollamaUrl', 'ollamaModel', 'rate', 'voiceName', 'speechEngine', 'speechLang', 'whisperUrl', 'whisperKey', 'whisperModel']) {
+for (const id of ['provider', 'geminiKey', 'geminiModel', 'deepseekKey', 'deepseekModel', 'ollamaUrl', 'ollamaModel', 'rate', 'voiceName', 'ttsEngine', 'ttsUrl', 'speechEngine', 'speechLang', 'whisperUrl', 'whisperKey', 'whisperModel']) {
   el[id] = document.getElementById(id);
 }
 const rateValueEl = document.getElementById('rate-value');
@@ -77,6 +79,8 @@ function save() {
       rate: Number(el.rate.value),
       voiceName: el.voiceName.value,
       autoDescribe: document.getElementById('autoDescribe').checked,
+      ttsEngine: el.ttsEngine.value,
+      ttsUrl: el.ttsUrl.value.trim() || DEFAULTS.ttsUrl,
       speechEngine: el.speechEngine.value,
       speechLang: el.speechLang.value,
       whisperUrl: el.whisperUrl.value.trim() || DEFAULTS.whisperUrl,
@@ -153,6 +157,31 @@ document.getElementById('test-whisper').addEventListener('click', async () => {
     whisperStatusEl.textContent = `The server at ${url} is reachable (HTTP ${res.status}). You are good to go.`;
   } catch {
     whisperStatusEl.textContent = `Cannot reach ${url}. Is the server running? Vowen's always-on server is http://localhost:58765`;
+  }
+});
+
+document.getElementById('test-tts').addEventListener('click', async () => {
+  const ttsStatusEl = document.getElementById('tts-status');
+  const url = (el.ttsUrl.value.trim() || DEFAULTS.ttsUrl).replace(/\/+$/, '');
+  ttsStatusEl.textContent = 'Generating a voice sample...';
+  try {
+    const res = await fetch(`${url}/audio/speech`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'speaches-ai/piper-ca_ES-upc_ona-medium',
+        voice: 'ona',
+        input: 'Hola! Aquesta és la veu neural en català de WebSight.',
+        response_format: 'wav',
+      }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const audio = new Audio(URL.createObjectURL(await res.blob()));
+    audio.playbackRate = Number(el.rate.value) || 1.4;
+    audio.play();
+    ttsStatusEl.textContent = 'The neural voice server works. You should be hearing a Catalan sample.';
+  } catch (err) {
+    ttsStatusEl.textContent = `Cannot reach the neural voice server (${err.message}). Start it with run-tts-server.sh from the project folder.`;
   }
 });
 
