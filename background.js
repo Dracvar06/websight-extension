@@ -14,6 +14,7 @@ const DEFAULT_SETTINGS = {
   rate: 1.4,
   speechLang: 'auto',
   voiceName: '',
+  autoDescribe: true,
 };
 
 // Element texts that require a spoken confirmation before acting.
@@ -31,11 +32,37 @@ async function getSettings() {
   return settings;
 }
 
-function speak(text, { lang, rate, enqueue = false, voiceName } = {}) {
+// macOS novelty and low-quality voices that automatic matching must never
+// pick (the user can still choose them explicitly in settings).
+const UGLY_VOICES = /albert|bad news|bahh|bells|boing|bubbles|cellos|good news|jester|organ|superstar|trinoids|whisper|wobble|zarvox|junior|ralph|fred|kathy|compact|eloquence/i;
+const NICE_VOICES = /samantha|daniel|karen|moira|tessa|montserrat|montse|jordi|m[oó]nica|paulina|anna|am[eé]lie|alice|luciana|joana|ellen|thomas|yuna|kyoko|milena|zosia/i;
+
+let voicesCache = null;
+async function pickVoice(lang) {
+  if (!lang) return null;
+  if (!voicesCache) voicesCache = await new Promise((r) => chrome.tts.getVoices((v) => r(v || [])));
+  const base = lang.toLowerCase().split('-')[0];
+  const candidates = voicesCache.filter(
+    (v) => (v.lang || '').toLowerCase().startsWith(base) && !UGLY_VOICES.test(v.voiceName || '')
+  );
+  if (!candidates.length) return null;
+  const exact = candidates.filter((v) => (v.lang || '').toLowerCase() === lang.toLowerCase());
+  const pool = exact.length ? exact : candidates;
+  const preferred = pool.find((v) => NICE_VOICES.test(v.voiceName || ''));
+  return (preferred || pool[0]).voiceName;
+}
+
+async function speak(text, { lang, rate, enqueue = false, voiceName } = {}) {
   const options = { rate: rate || 1.4, enqueue };
-  // A user-chosen voice always wins; otherwise match the answer language.
-  if (voiceName) options.voiceName = voiceName;
-  else if (lang) options.lang = lang;
+  // A user-chosen voice always wins; otherwise pick a decent voice for the
+  // answer language rather than letting Chrome land on a novelty voice.
+  if (voiceName) {
+    options.voiceName = voiceName;
+  } else if (lang) {
+    const auto = await pickVoice(lang);
+    if (auto) options.voiceName = auto;
+    else options.lang = lang;
+  }
   chrome.tts.speak(text, options);
 }
 
@@ -51,9 +78,93 @@ async function setTabState(tabId, state) {
   await chrome.storage.session.set({ [`tab:${tabId}`]: state });
 }
 
+// SPAs like Google Maps rewrite the URL constantly (map coordinates, filters,
+// scroll state). Normalize to the part that identifies the actual page so we
+// only react to real page changes.
+const tabKeys = new Map(); // tabId -> normalized page key
+
+function pageKey(u) {
+  try {
+    const url = new URL(u);
+    const path = url.pathname
+      .split('/')
+      .filter((seg) => seg && !seg.startsWith('@'))
+      .join('/');
+    return `${url.origin}/${path}`;
+  } catch {
+    return u;
+  }
+}
+
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-  if (changeInfo.url) chrome.storage.session.remove(`tab:${tabId}`);
+  if (!changeInfo.url) return;
+  const key = pageKey(changeInfo.url);
+  if (tabKeys.get(tabId) === key) return; // same page, cosmetic URL change
+  tabKeys.set(tabId, key);
+  chrome.storage.session.remove(`tab:${tabId}`);
 });
+
+// ---- automatic page description on load ----
+
+const describedTabs = new Map(); // tabId -> { url, t }
+// Auto-descriptions must never talk over a conversation the user is having.
+let lastManualActivity = 0;
+
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+  if (changeInfo.status !== 'complete' || !tab || !tab.active) return;
+  if (!/^https?:/i.test(tab.url || '')) return;
+  const settings = await getSettings();
+  if (!settings.autoDescribe) return;
+  const key = pageKey(tab.url);
+  const prev = describedTabs.get(tabId);
+  if (prev && prev.key === key) return; // this page was already described
+  if (prev && Date.now() - prev.t < 20000) return; // anti-chatter cooldown
+  describedTabs.set(tabId, { key, t: Date.now() });
+  setTimeout(() => autoDescribe(tabId, tab.windowId), 800);
+});
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  describedTabs.delete(tabId);
+  tabKeys.delete(tabId);
+});
+
+async function autoDescribe(tabId, windowId) {
+  try {
+    const settings = await getSettings();
+    const provider = getProvider(settings);
+    if (provider.needsKey && !provider.apiKey) return;
+    // Never talk over an answer the user is already listening to.
+    if (await new Promise((r) => chrome.tts.isSpeaking(r))) return;
+    const extraction = await messageTab(tabId, { type: 'websight-extract' });
+    let screenshotBase64 = '';
+    if (provider.vision) screenshotBase64 = await captureScreenshot(windowId);
+    const question =
+      'I just opened this page. In at most two short sentences, tell me what page I am on and what its main content is right now. Name the actual page, article, place or product, and skip generic interface details.';
+    const result = await provider.ask({
+      history: [],
+      question,
+      pageText: extraction.pageText,
+      screenshotBase64,
+    });
+    if (!result.answer) return;
+    // The AI call above takes seconds; the world may have changed. If the
+    // user asked something meanwhile (or an answer is being spoken), this
+    // description is stale noise - drop it instead of talking over them.
+    if (Date.now() - lastManualActivity < 15000) return;
+    if (await new Promise((r) => chrome.tts.isSpeaking(r))) return;
+    const state = await getTabState(tabId);
+    state.history.push(
+      { role: 'user', parts: [{ text: question }] },
+      { role: 'model', parts: [{ text: JSON.stringify({ answer: result.answer, action: null }) }] }
+    );
+    state.history = state.history.slice(-16);
+    state.elements = extraction.elements;
+    await setTabState(tabId, state);
+    speak(result.answer, { lang: result.lang, rate: settings.rate, voiceName: settings.voiceName, enqueue: true });
+  } catch {
+    /* page not describable (chrome page, mid-navigation, provider down) */
+  }
+}
 
 // Alt+Shift+N: wipe this tab's conversation and reopen the popup fresh.
 chrome.commands.onCommand.addListener(async (command) => {
@@ -113,6 +224,7 @@ async function downscaleToBase64(dataUrl, maxWidth) {
 // ---- main flow ----
 
 async function handleAsk(question) {
+  lastManualActivity = Date.now();
   const settings = await getSettings();
   const provider = getProvider(settings);
   if (provider.needsKey && !provider.apiKey) {
@@ -216,6 +328,7 @@ async function handleAsk(question) {
 }
 
 async function performAction(tab, action, settings, state, enqueue = false) {
+  lastManualActivity = Date.now();
   let outcome;
   try {
     outcome = await messageTab(tab.id, { type: 'websight-action', action });

@@ -85,7 +85,7 @@
     <input type="text" id="ollamaUrl" aria-describedby="ollama-note">
     <label for="ollamaModel">Ollama model</label>
     <input type="text" id="ollamaModel" aria-describedby="ollama-note">
-    <p class="note" id="ollama-note">Needs the Ollama app running (default address http://localhost:11434). Pull a vision model once in the terminal, for example: ollama pull qwen3.5:9b. Press Test connection to list the models you have installed. If the test says blocked or 403, quit Ollama and start it with: launchctl setenv OLLAMA_ORIGINS "chrome-extension://*"</p>
+    <p class="note" id="ollama-note">Needs the Ollama app running (default address http://localhost:11434). Pull a vision model once in the terminal, for example: ollama pull qwen3.5:9b. Press Test connection to list the models you have installed. The extension identifies itself to Ollama as a local request automatically, so no OLLAMA_ORIGINS setup is needed.</p>
   </fieldset>
 
   <button type="button" id="toggle-keys">Show keys</button>
@@ -115,6 +115,8 @@
     <label for="whisperModel">Whisper model</label>
     <input type="text" id="whisperModel" aria-describedby="whisper-model-note">
     <p class="note" id="whisper-model-note">Default: whisper-large-v3-turbo</p>
+    <button type="button" id="test-whisper">Test Whisper server</button>
+    <p class="note" id="whisper-status" role="status" aria-live="polite"></p>
 
     <label for="speechLang">Language you speak to it in (Browser engine only)</label>
     <select id="speechLang">
@@ -131,6 +133,15 @@
     <label for="mic-button" style="margin-top:14px;">Microphone</label>
     <button type="button" id="mic-button">Enable microphone</button>
     <p class="note" id="mic-status" role="status" aria-live="polite">Grant microphone access once here so the hotkey can listen right away.</p>
+  </fieldset>
+
+  <fieldset>
+    <legend>Behavior</legend>
+    <label for="autoDescribe" style="font-weight:600;">
+      <input type="checkbox" id="autoDescribe" style="width:auto; margin-right:8px;">
+      Describe each page out loud automatically when it loads
+    </label>
+    <p class="note">A short one or two sentence summary is spoken whenever you open a new page, unless the AI is already talking.</p>
   </fieldset>
 
   <fieldset>

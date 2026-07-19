@@ -12,6 +12,7 @@ const DEFAULTS = {
   ollamaModel: 'qwen3.5:9b',
   rate: 1.4,
   voiceName: '',
+  autoDescribe: true,
   speechEngine: 'browser',
   speechLang: 'auto',
   whisperUrl: 'https://api.groq.com/openai/v1',
@@ -58,6 +59,7 @@ async function load() {
   // gemini-2.5-flash (the old default) is closed to new accounts; upgrade it.
   if (s.geminiModel === 'gemini-2.5-flash') s.geminiModel = 'gemini-3.5-flash';
   for (const id of Object.keys(el)) el[id].value = s[id];
+  document.getElementById('autoDescribe').checked = Boolean(s.autoDescribe);
   rateValueEl.textContent = Number(s.rate).toFixed(1) + 'x';
 }
 
@@ -74,6 +76,7 @@ function save() {
       ollamaModel: el.ollamaModel.value.trim() || DEFAULTS.ollamaModel,
       rate: Number(el.rate.value),
       voiceName: el.voiceName.value,
+      autoDescribe: document.getElementById('autoDescribe').checked,
       speechEngine: el.speechEngine.value,
       speechLang: el.speechLang.value,
       whisperUrl: el.whisperUrl.value.trim() || DEFAULTS.whisperUrl,
@@ -86,6 +89,7 @@ function save() {
 }
 
 for (const id of Object.keys(el)) el[id].addEventListener('input', save);
+document.getElementById('autoDescribe').addEventListener('change', save);
 
 el.rate.addEventListener('input', () => {
   rateValueEl.textContent = Number(el.rate.value).toFixed(1) + 'x';
@@ -137,6 +141,18 @@ document.getElementById('test-connection').addEventListener('click', async () =>
         ? `Could not reach Ollama (${err.status || 'network error'}): ${err.message}. Is the Ollama app running?`
         : `The key was rejected (${err.status || 'network error'}): ${err.message}`;
     testStatusEl.className = 'bad';
+  }
+});
+
+document.getElementById('test-whisper').addEventListener('click', async () => {
+  const whisperStatusEl = document.getElementById('whisper-status');
+  const url = (el.whisperUrl.value.trim() || DEFAULTS.whisperUrl).replace(/\/+$/, '');
+  whisperStatusEl.textContent = 'Testing...';
+  try {
+    const res = await fetch(url + '/');
+    whisperStatusEl.textContent = `The server at ${url} is reachable (HTTP ${res.status}). You are good to go.`;
+  } catch {
+    whisperStatusEl.textContent = `Cannot reach ${url}. Is the server running? Vowen's always-on server is http://localhost:58765`;
   }
 });
 

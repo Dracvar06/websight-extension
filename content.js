@@ -37,6 +37,16 @@
   }
 
   function executeAction(action) {
+    if (action.type === 'scroll') {
+      const dir = String(action.value || 'down').toLowerCase();
+      const doc = document.documentElement;
+      if (dir === 'top') window.scrollTo({ top: 0 });
+      else if (dir === 'bottom') window.scrollTo({ top: doc.scrollHeight });
+      else window.scrollBy({ top: (dir === 'up' ? -0.85 : 0.85) * window.innerHeight });
+      const max = Math.max(1, doc.scrollHeight - window.innerHeight);
+      const pct = Math.min(100, Math.round((window.scrollY / max) * 100));
+      return { ok: true, detail: `Scrolled ${dir}. Now at ${pct} percent of the page.` };
+    }
     const ws = window.__websight;
     const el = ws && ws.map ? ws.map[action.index] : undefined;
     if (!el || !el.isConnected) {

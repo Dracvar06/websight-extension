@@ -124,7 +124,7 @@ async function startRecording() {
   listening = true;
   setTalkUI(true);
   beep(880, 120);
-  setStatus('Recording... pauses are fine, any language works. Press Enter or Send when you are done.', 'listening');
+  setStatus('Recording with Whisper... pauses are fine, any language works. Press Enter or Send when you are done.', 'listening');
 }
 
 // Convert the recording to 16 kHz mono WAV: whisper.cpp's server needs WAV
@@ -288,7 +288,7 @@ function startListening() {
   listening = true;
   setTalkUI(true);
   beep(880, 120);
-  setStatus('Listening... pauses are fine. Press Enter or Send when you are done.', 'listening');
+  setStatus('Listening with the BROWSER engine (single language - switch to Whisper in Settings for any language)... Press Enter or Send when you are done.', 'listening');
 }
 
 function stopListeningAndSend() {
