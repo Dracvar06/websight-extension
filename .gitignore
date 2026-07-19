@@ -1,0 +1,4 @@
+.DS_Store
+*.log
+# Local Whisper models are big; download via run-whisper-server.sh instructions
+models/

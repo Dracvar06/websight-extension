@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Mock Drive</title>
+  <style>
+    body { font-family: system-ui, sans-serif; padding: 20px; }
+    [role="gridcell"] { display: inline-block; border: 1px solid #999; border-radius: 8px; padding: 18px; margin: 8px; cursor: pointer; }
+    [role="gridcell"].selected { background: #cde; }
+    #status { font-weight: bold; margin-top: 16px; }
+  </style>
+</head>
+<body>
+  <h1>My Drive (mock)</h1>
+  <div role="grid" id="grid" aria-label="Files">
+    <div role="row">
+      <div role="gridcell" tabindex="0" aria-label="PERSONAL, Google Drive folder" data-name="PERSONAL">
+        PERSONAL
+        <button aria-label="More actions for PERSONAL">&#8942;</button>
+      </div>
+      <div role="gridcell" tabindex="-1" aria-label="PROFESSIONAL, Google Drive folder" data-name="PROFESSIONAL">
+        PROFESSIONAL
+        <button aria-label="More actions for PROFESSIONAL">&#8942;</button>
+      </div>
+      <div role="gridcell" tabindex="-1" aria-label="EDUCATIU, Google Drive folder" data-name="EDUCATIU">
+        EDUCATIU
+        <button aria-label="More actions for EDUCATIU">&#8942;</button>
+      </div>
+    </div>
+  </div>
+  <p id="status">No folder open.</p>
+
+  <script>
+    // Stub so content.js can register its listener outside the extension.
+    window.chrome = window.chrome || { runtime: { onMessage: { addListener() {} } } };
+
+    // Drive-like behavior with DELEGATED listeners on the grid:
+    // single click selects; double-click or Enter opens.
+    const grid = document.getElementById('grid');
+    const status = document.getElementById('status');
+    function cellOf(target) { return target.closest('[role="gridcell"]'); }
+    grid.addEventListener('click', (e) => {
+      const cell = cellOf(e.target);
+      if (!cell) return;
+      document.querySelectorAll('.selected').forEach((c) => c.classList.remove('selected'));
+      cell.classList.add('selected');
+      status.textContent = 'Selected ' + cell.dataset.name + ' (not open)';
+    });
+    function open(cell) {
+      status.textContent = 'OPENED ' + cell.dataset.name;
+      document.title = 'Mock Drive - ' + cell.dataset.name;
+    }
+    grid.addEventListener('dblclick', (e) => {
+      const cell = cellOf(e.target);
+      if (cell) open(cell);
+    });
+    grid.addEventListener('keydown', (e) => {
+      const cell = cellOf(e.target);
+      if (cell && e.keyCode === 13) open(cell);
+    });
+  </script>
+  <script src="../lib/page-extract.js"></script>
+  <script src="../content.js"></script>
+</body>
+</html>

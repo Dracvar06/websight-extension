@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "WebSight - AI sighted friend",
+  "description": "Talk to an AI that sees the page and describes it, like a sighted friend sitting next to you.",
+  "version": "0.1.0",
+  "permissions": ["activeTab", "scripting", "storage", "tabs", "tts"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["lib/page-extract.js", "content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Ask WebSight"
+  },
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Alt+Shift+S"
+      },
+      "description": "Ask WebSight about this page (continues the conversation)"
+    },
+    "new-conversation": {
+      "suggested_key": {
+        "default": "Alt+Shift+N"
+      },
+      "description": "Start a new WebSight conversation on this page"
+    }
+  },
+  "options_page": "options.html"
+}

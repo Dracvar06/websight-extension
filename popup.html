@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>WebSight</title>
+  <style>
+    body {
+      width: 340px;
+      margin: 0;
+      padding: 12px;
+      font-family: system-ui, sans-serif;
+      font-size: 15px;
+      background: #111;
+      color: #eee;
+    }
+    h1 { font-size: 16px; margin: 0 0 8px; }
+    #status {
+      min-height: 22px;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+    #status.listening { color: #6f6; }
+    #status.thinking { color: #fc6; }
+    #status.error { color: #f88; }
+    #transcript {
+      max-height: 220px;
+      overflow-y: auto;
+      margin: 0 0 10px;
+      padding: 0;
+      list-style: none;
+    }
+    #transcript li { margin-bottom: 6px; line-height: 1.35; }
+    #transcript .you { color: #9cf; }
+    form { display: flex; gap: 6px; }
+    input[type="text"] {
+      flex: 1;
+      padding: 8px;
+      font-size: 15px;
+      border-radius: 6px;
+      border: 1px solid #555;
+      background: #222;
+      color: #eee;
+    }
+    button {
+      padding: 8px 12px;
+      font-size: 15px;
+      border-radius: 6px;
+      border: none;
+      background: #36c;
+      color: #fff;
+      cursor: pointer;
+    }
+    button:focus-visible, input:focus-visible { outline: 3px solid #6cf; outline-offset: 1px; }
+    #hint { font-size: 12px; color: #999; margin-top: 8px; }
+    a { color: #9cf; }
+  </style>
+</head>
+<body>
+  <h1>WebSight</h1>
+  <p id="status" role="status" aria-live="assertive"></p>
+  <ul id="transcript" aria-label="Conversation"></ul>
+  <form id="ask-form">
+    <button type="button" id="talk" aria-label="Talk: ask by voice">&#127908; Talk</button>
+    <input type="text" id="question" aria-label="Type your question about this page" autocomplete="off">
+    <button type="submit">Ask</button>
+  </form>
+  <p id="hint">Speak after the beep; pauses and breaths are fine, it keeps listening. Press Enter or the Send button (or Alt+Shift+S) to send. Your words appear in the box, so you can edit before sending or just type instead. <a href="#" id="open-options">Settings</a></p>
+  <script src="popup.js"></script>
+</body>
+</html>
