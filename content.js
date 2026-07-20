@@ -99,6 +99,15 @@
         sendResponse(executeAction(msg.action));
       } else if (msg.type === 'websight-title') {
         sendResponse({ title: document.title });
+      } else if (msg.type === 'websight-scan-info') {
+        sendResponse({
+          scrollY: window.scrollY,
+          viewportH: window.innerHeight,
+          screens: Math.max(1, Math.ceil(document.documentElement.scrollHeight / window.innerHeight)),
+        });
+      } else if (msg.type === 'websight-scroll-to') {
+        window.scrollTo({ top: msg.y, behavior: 'instant' });
+        sendResponse({ ok: true });
       }
     } catch (err) {
       sendResponse({ ok: false, detail: String(err && err.message ? err.message : err) });

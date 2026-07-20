@@ -150,12 +150,27 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if (prev && prev.key === key) return; // this page was already described
   if (prev && Date.now() - prev.t < 20000) return; // anti-chatter cooldown
   describedTabs.set(tabId, { key, t: Date.now() });
-  setTimeout(() => autoDescribe(tabId, tab.windowId), 800);
+  setTimeout(() => scanAndDescribe(tabId, tab.windowId, key), 800);
 });
+
+async function scanAndDescribe(tabId, windowId, key) {
+  try {
+    const settings = await getSettings();
+    const provider = getProvider(settings);
+    if (provider.vision) {
+      const shot = await captureFullPage(tabId, windowId);
+      if (shot) fullShots.set(tabId, { key, base64: shot, t: Date.now() });
+    }
+  } catch {
+    /* scan failed (page navigated away, protected page); describe anyway */
+  }
+  await autoDescribe(tabId, windowId);
+}
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   describedTabs.delete(tabId);
   tabKeys.delete(tabId);
+  fullShots.delete(tabId);
 });
 
 async function autoDescribe(tabId, windowId) {
@@ -167,7 +182,10 @@ async function autoDescribe(tabId, windowId) {
     if (await new Promise((r) => chrome.tts.isSpeaking(r))) return;
     const extraction = await messageTab(tabId, { type: 'websight-extract' });
     let screenshotBase64 = '';
-    if (provider.vision) screenshotBase64 = await captureScreenshot(windowId);
+    if (provider.vision) {
+      const cached = fullShots.get(tabId);
+      screenshotBase64 = cached && Date.now() - cached.t < 180000 ? cached.base64 : await captureScreenshot(windowId);
+    }
     const question =
       'I just opened this page. In at most two short sentences, tell me what page I am on and what its main content is right now. Name the actual page, article, place or product, and skip generic interface details.';
     const result = await provider.ask({
@@ -234,6 +252,15 @@ async function captureScreenshot(windowId) {
   return downscaleToBase64(dataUrl, 1024);
 }
 
+function bytesToBase64(bytes) {
+  let binary = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
 async function downscaleToBase64(dataUrl, maxWidth) {
   const blob = await (await fetch(dataUrl)).blob();
   const bitmap = await createImageBitmap(blob);
@@ -241,14 +268,50 @@ async function downscaleToBase64(dataUrl, maxWidth) {
   const canvas = new OffscreenCanvas(Math.round(bitmap.width * scale), Math.round(bitmap.height * scale));
   canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
   const jpeg = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.7 });
-  const buffer = await jpeg.arrayBuffer();
-  const bytes = new Uint8Array(buffer);
-  let binary = '';
-  const chunk = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunk) {
-    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  return bytesToBase64(new Uint8Array(await jpeg.arrayBuffer()));
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Full-page knowledge: on page load the tab is swept top to bottom and the
+// screenshots are stitched into one tall image, so answers can see content
+// far below the fold. Cached per tab; capped to keep cost and time sane.
+const fullShots = new Map(); // tabId -> { key, base64, t }
+const MAX_SCAN_SCREENS = 5;
+
+async function stitchScreenshots(dataUrls, maxWidth) {
+  const bitmaps = [];
+  for (const u of dataUrls) {
+    bitmaps.push(await createImageBitmap(await (await fetch(u)).blob()));
   }
-  return btoa(binary);
+  const scale = Math.min(1, maxWidth / bitmaps[0].width);
+  const width = Math.round(bitmaps[0].width * scale);
+  const height = bitmaps.reduce((sum, b) => sum + Math.round(b.height * scale), 0);
+  const canvas = new OffscreenCanvas(width, height);
+  const ctx = canvas.getContext('2d');
+  let y = 0;
+  for (const b of bitmaps) {
+    const h = Math.round(b.height * scale);
+    ctx.drawImage(b, 0, y, width, h);
+    y += h;
+  }
+  const jpeg = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.65 });
+  return bytesToBase64(new Uint8Array(await jpeg.arrayBuffer()));
+}
+
+async function captureFullPage(tabId, windowId) {
+  const info = await messageTab(tabId, { type: 'websight-scan-info' });
+  const screens = Math.min(info.screens, MAX_SCAN_SCREENS);
+  if (screens <= 1) return captureScreenshot(windowId);
+  const shots = [];
+  for (let i = 0; i < screens; i++) {
+    await messageTab(tabId, { type: 'websight-scroll-to', y: i * info.viewportH });
+    // Rendering settle time; also respects Chrome's 2-captures/second limit.
+    await sleep(600);
+    shots.push(await chrome.tabs.captureVisibleTab(windowId, { format: 'jpeg', quality: 80 }));
+  }
+  await messageTab(tabId, { type: 'websight-scroll-to', y: info.scrollY });
+  return stitchScreenshots(shots, 1024);
 }
 
 // ---- main flow ----
@@ -291,7 +354,14 @@ async function handleAsk(question) {
   let screenshotBase64 = '';
   try {
     extraction = await messageTab(tab.id, { type: 'websight-extract' });
-    if (provider.vision) screenshotBase64 = await captureScreenshot(tab.windowId);
+    if (provider.vision) {
+      const cached = fullShots.get(tab.id);
+      if (cached && cached.key === pageKey(tab.url) && Date.now() - cached.t < 180000) {
+        screenshotBase64 = cached.base64; // whole page, top to bottom
+      } else {
+        screenshotBase64 = await captureScreenshot(tab.windowId);
+      }
+    }
   } catch (err) {
     const msg = 'I could not read this page. Try reloading it and asking again.';
     speak(msg, { rate: settings.rate, voiceName: settings.voiceName });

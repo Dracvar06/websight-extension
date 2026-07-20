@@ -59,6 +59,11 @@ voice out, and it can click, focus or fill things when you ask.
   ask again by voice without closing it, or just type.
 - Press **Alt+Shift+N** to start a NEW conversation on the current page:
   it wipes that tab's history and opens the window fresh and listening.
+- When a page loads, the extension sweeps it top to bottom photographing
+  everything (up to 5 screens, stitched into one tall image), so answers can
+  see content far below the fold. The sweep takes about 2 seconds and your
+  scroll position is restored. Controlled by the same "Explore each page
+  automatically" toggle as the spoken summaries.
 - Each tab has its own independent conversation, so you can hold different
   conversations in different tabs at the same time.
 - Actions on risky buttons (buy, pay, delete, submit...) are read back first
