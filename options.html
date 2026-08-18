@@ -106,7 +106,7 @@
     <input type="text" id="ttsUrl">
     <button type="button" id="test-tts">Test neural voice</button>
     <p class="note" id="tts-status" role="status" aria-live="polite"></p>
-    <p class="note" id="tts-note">The neural engine needs run-tts-server.sh running (from the project folder). English, Spanish, Catalan, French, Italian, Portuguese, Hindi, Japanese and Chinese sound natural; other languages fall back to system voices automatically.</p>
+    <p class="note" id="tts-note">The neural engine uses the local voice server (run-voice-server.sh, started automatically at login). English, Spanish, Catalan, French, Italian, Portuguese, Hindi, Japanese and Chinese sound natural; other languages fall back to system voices automatically.</p>
 
     <label for="voiceName">Voice for answers (system engine only)</label>
     <select id="voiceName" aria-describedby="voice-note"></select>
@@ -117,7 +117,7 @@
       <option value="browser">Browser - one language, live transcript, no key needed</option>
       <option value="whisper">Whisper - ANY language auto-detected, needs a free Groq key</option>
     </select>
-    <p class="note" id="engine-note">Whisper large v3 turbo understands every language and detects which one you speak automatically. Free key from <a href="https://console.groq.com/keys" target="_blank">console.groq.com</a>: about 2,000 transcriptions per day, no card. Advanced: the address below can point to any OpenAI-compatible Whisper server, including a local one.</p>
+    <p class="note" id="engine-note">Whisper large v3 turbo understands every language and detects which one you speak automatically. By default it uses the local voice server on this computer (free, private, no key). It can also point at any OpenAI-compatible Whisper server, or at Groq's cloud (<a href="https://console.groq.com/keys" target="_blank">free key</a>, address https://api.groq.com/openai/v1). If the configured server does not answer, the local one is used automatically.</p>
 
     <label for="whisperKey">Whisper API key (Groq)</label>
     <input type="password" id="whisperKey" autocomplete="off">

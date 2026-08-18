@@ -38,20 +38,23 @@ voice out, and it can click, focus or fill things when you ask.
 - Two speech engines in Settings: **Whisper** (large v3 turbo) understands
   ANY language and auto-detects it; **Browser** needs no key and shows a live
   transcript but is locked to one language.
-- Whisper can run three ways (pick one in Settings via the server address):
-  - **Vowen's server (recommended if Vowen is installed)**: Vowen already
-    runs a whisper.cpp server all the time. Address `http://localhost:58765`,
-    empty API key. Free, unlimited, private, nothing extra to run.
-  - **Own local server**: `brew install whisper-cpp`, run
-    `./run-whisper-server.sh` (it reuses Vowen's model file, or tells you how
-    to download one), address `http://localhost:8090`, empty key.
+- Whisper options (set via the server address in Settings):
+  - **Local voice server (default)**: `http://localhost:8100/v1`, no key.
+    The same always-on server that does the neural voices, so nothing extra
+    to start. Free, unlimited, private, about 1 to 4 seconds per question.
   - **Groq cloud**: key from https://console.groq.com/keys, ~2,000
     transcriptions/day free, address `https://api.groq.com/openai/v1`.
+  - **Any other OpenAI-compatible or whisper.cpp server**, including one
+    bundled with another app. Note that such servers may stop on their own
+    (Vowen shuts its server down in resource efficient mode, for example);
+    when the configured server does not answer, WebSight automatically uses
+    the local voice server instead.
 - With the Browser engine, unsent words are restored if the window closes
   mid-dictation. With Whisper, prefer Enter to send: audio is recorded in the
-  window and is lost if the window closes before you send. Ask anything: "what is this page?", "is there a cheaper
-  option?", "where do I unsubscribe?", "click the login button", "put
-  esterprat@gmail.com in the email field".
+  window and is lost if the window closes before you send.
+- Ask anything: "what is this page?", "is there a cheaper option?", "where do
+  I unsubscribe?", "click the login button", "scroll down", "open the
+  PERSONAL folder".
 - Press the hotkey again at any time to interrupt the answer and ask something new.
 - Follow-up questions keep context: the conversation for the current tab is
   remembered (until you navigate away) and redisplayed whenever the window
@@ -85,7 +88,7 @@ all local and free):
    `~/Library/LaunchAgents/com.websight.tts-server.plist` (the one WebSight
    file outside this folder; it logs to `tts-server/server.log`). To remove
    it: `launchctl bootout gui/$(id -u)/com.websight.tts-server` and delete
-   the plist. To run manually instead: `./run-tts-server.sh`.
+   the plist. To run manually instead: `./run-voice-server.sh`.
 3. In Settings, set Voice engine to "Neural local server" and press
    Test neural voice.
 

@@ -1,8 +1,10 @@
 #!/bin/bash
-# Local neural text-to-speech (and speech-to-text) server for WebSight,
-# powered by Speaches (Kokoro for English/Spanish, Piper for Catalan).
-# Models download on first use into tts-server/models (self-contained).
-# Extension setting: TTS server address http://localhost:8100
+# Local voice server for WebSight: does BOTH speech-to-text (Whisper
+# large-v3-turbo, any language auto-detected) and text-to-speech (Kokoro for
+# most languages, Piper for Catalan), via Speaches. Everything runs on this
+# computer, free and private. Models live in tts-server/models.
+# Extension settings: Whisper server address AND neural voice server address
+# both point to http://localhost:8100/v1
 # launchd starts with a minimal PATH that does not include Homebrew.
 export PATH="/opt/homebrew/bin:$PATH"
 cd "$(dirname "$0")/tts-server/src"

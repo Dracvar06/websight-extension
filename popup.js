@@ -27,9 +27,9 @@ let audioChunks = [];
 let settings = {
   speechEngine: 'browser',
   speechLang: 'auto',
-  whisperUrl: 'https://api.groq.com/openai/v1',
+  whisperUrl: 'http://localhost:8100/v1',
   whisperKey: '',
-  whisperModel: 'whisper-large-v3-turbo',
+  whisperModel: 'deepdml/faster-whisper-large-v3-turbo-ct2',
 };
 
 document.getElementById('open-options').addEventListener('click', (e) => {
@@ -194,13 +194,41 @@ function stopRecordingAndSend() {
   recorder.stop();
 }
 
+// The always-on local voice server, used as a backup whenever the configured
+// transcription server is unreachable (for example Vowen's bundled server
+// sleeping in resource efficient mode).
+const LOCAL_VOICE_SERVER = {
+  url: 'http://localhost:8100/v1',
+  model: 'deepdml/faster-whisper-large-v3-turbo-ct2',
+};
+
 async function transcribe(blob) {
-  const url = (settings.whisperUrl || 'https://api.groq.com/openai/v1').replace(/\/+$/, '');
+  const configured = {
+    url: (settings.whisperUrl || LOCAL_VOICE_SERVER.url).replace(/\/+$/, ''),
+    model: settings.whisperModel || LOCAL_VOICE_SERVER.model,
+    key: settings.whisperKey,
+  };
+  try {
+    return await transcribeWith(blob, configured);
+  } catch (err) {
+    if (configured.url === LOCAL_VOICE_SERVER.url) throw err;
+    // Configured server is down or refused: fall back to the local one.
+    try {
+      const text = await transcribeWith(blob, LOCAL_VOICE_SERVER);
+      setStatus('Used the local voice server because the configured one did not answer.');
+      return text;
+    } catch {
+      throw err;
+    }
+  }
+}
+
+async function transcribeWith(blob, { url, model, key }) {
   const body = new FormData();
   body.append('file', blob, 'question.wav');
-  body.append('model', settings.whisperModel || 'whisper-large-v3-turbo');
+  body.append('model', model);
   const headers = {};
-  if (settings.whisperKey) headers.Authorization = `Bearer ${settings.whisperKey}`;
+  if (key) headers.Authorization = `Bearer ${key}`;
   let res;
   try {
     res = await fetch(`${url}/audio/transcriptions`, { method: 'POST', headers, body });
