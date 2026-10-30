@@ -132,6 +132,11 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (tabKeys.get(tabId) === key) return; // same page, cosmetic URL change
   tabKeys.set(tabId, key);
   chrome.storage.session.remove(`tab:${tabId}`);
+  // A description of the page they just left is no use to them any more.
+  if (autoSpeech && autoSpeech.tabId === tabId) {
+    autoSpeech = null;
+    stopSpeech();
+  }
 });
 
 // ---- automatic page description on load ----
@@ -139,6 +144,14 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
 const describedTabs = new Map(); // tabId -> { url, t }
 // Auto-descriptions must never talk over a conversation the user is having.
 let lastManualActivity = 0;
+// The page an automatic description is being spoken for, so it can be cut
+// off when the person leaves that page.
+let autoSpeech = null; // { tabId, key }
+
+function stopSpeech() {
+  chrome.tts.stop();
+  chrome.runtime.sendMessage({ type: 'websight-tts-stop' }).catch(() => {});
+}
 
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if (changeInfo.status !== 'complete' || !tab || !tab.active) return;
@@ -148,7 +161,6 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   const key = pageKey(tab.url);
   const prev = describedTabs.get(tabId);
   if (prev && prev.key === key) return; // this page was already described
-  if (prev && Date.now() - prev.t < 20000) return; // anti-chatter cooldown
   describedTabs.set(tabId, { key, t: Date.now() });
   setTimeout(() => scanAndDescribe(tabId, tab.windowId, key), 800);
 });
@@ -164,7 +176,7 @@ async function scanAndDescribe(tabId, windowId, key) {
   } catch {
     /* scan failed (page navigated away, protected page); describe anyway */
   }
-  await autoDescribe(tabId, windowId);
+  await autoDescribe(tabId, windowId, key);
 }
 
 chrome.tabs.onRemoved.addListener((tabId) => {
@@ -173,13 +185,11 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   fullShots.delete(tabId);
 });
 
-async function autoDescribe(tabId, windowId) {
+async function autoDescribe(tabId, windowId, key) {
   try {
     const settings = await getSettings();
     const provider = getProvider(settings);
     if (provider.needsKey && !provider.apiKey) return;
-    // Never talk over an answer the user is already listening to.
-    if (await new Promise((r) => chrome.tts.isSpeaking(r))) return;
     const extraction = await messageTab(tabId, { type: 'websight-extract' });
     let screenshotBase64 = '';
     if (provider.vision) {
@@ -199,7 +209,11 @@ async function autoDescribe(tabId, windowId) {
     // user asked something meanwhile (or an answer is being spoken), this
     // description is stale noise - drop it instead of talking over them.
     if (Date.now() - lastManualActivity < 15000) return;
-    if (await new Promise((r) => chrome.tts.isSpeaking(r))) return;
+    // They may have moved on to another page while the AI was thinking.
+    // (Clicking through pages quickly used to leave the new page silent: a
+    // description still playing, or a 20 s cooldown, skipped it for good.)
+    const now = await chrome.tabs.get(tabId).catch(() => null);
+    if (!now || pageKey(now.url || '') !== key) return;
     const state = await getTabState(tabId);
     state.history.push(
       { role: 'user', parts: [{ text: question }] },
@@ -208,6 +222,8 @@ async function autoDescribe(tabId, windowId) {
     state.history = state.history.slice(-16);
     state.elements = extraction.elements;
     await setTabState(tabId, state);
+    autoSpeech = { tabId, key };
+    // Queued, so it waits for an answer that is still being spoken.
     speak(result.answer, { lang: result.lang, rate: settings.rate, voiceName: settings.voiceName, enqueue: true });
   } catch {
     /* page not describable (chrome page, mid-navigation, provider down) */
@@ -318,6 +334,7 @@ async function captureFullPage(tabId, windowId) {
 
 async function handleAsk(question) {
   lastManualActivity = Date.now();
+  autoSpeech = null;
   const settings = await getSettings();
   const provider = getProvider(settings);
   if (provider.needsKey && !provider.apiKey) {
