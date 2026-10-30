@@ -455,42 +455,122 @@ async function handleAsk(question) {
   }
 
   const target = extraction.elements.find((e) => e.index === result.action.index);
-  const targetName = target ? target.name : 'that element';
+  result.action.name = target ? target.name : '';
 
-  if (target && DANGEROUS.test(targetName)) {
+  // What is said around an action is written here, from what the page
+  // actually did, never by the model: a model's "I've clicked Buy now"
+  // while the app is still waiting for a yes is exactly the kind of words a
+  // person who cannot see the screen has no way to check.
+  if (target && DANGEROUS.test(target.name)) {
     state.pendingAction = result.action;
     await setTabState(tab.id, state);
-    const warning = `${result.answer} This will ${result.action.type} "${targetName}". Press the hotkey and say yes to confirm, or anything else to cancel.`;
-    speak(warning, { lang: result.lang, rate: settings.rate, voiceName: settings.voiceName });
+    const warning = `That would ${verbFor(result.action)} "${target.name}", which might buy, send or delete something. Nothing has been pressed yet. Press the hotkey and say yes to go ahead, or anything else to cancel.`;
+    speak(warning, { rate: settings.rate, voiceName: settings.voiceName });
     return { answer: warning, pendingConfirmation: true };
   }
 
   await setTabState(tab.id, state);
-  speak(result.answer, { lang: result.lang, rate: settings.rate, voiceName: settings.voiceName });
-  return performAction(tab, result.action, settings, state, true);
+  return performAction(tab, result.action, settings, state);
 }
 
-async function performAction(tab, action, settings, state, enqueue = false) {
-  lastManualActivity = Date.now();
-  let outcome;
+function verbFor(action) {
+  return { click: 'press', focus: 'move to', fill: 'type into', back: 'go back' }[action.type] || action.type;
+}
+
+function earcon(kind) {
+  ensureOffscreen()
+    .then(() => chrome.runtime.sendMessage({ type: 'websight-earcon', kind }))
+    .catch(() => {});
+}
+
+async function snapshot(tabId) {
   try {
-    outcome = await messageTab(tab.id, { type: 'websight-action', action });
-  } catch (err) {
-    outcome = { ok: false, detail: 'The page changed before I could do that.' };
+    return await chrome.tabs.sendMessage(tabId, { type: 'websight-snapshot' });
+  } catch {
+    return null; // the page is unloading: a navigation started
+  }
+}
+
+async function waitForLoad(tabId, timeout = 15000) {
+  const end = Date.now() + timeout;
+  while (Date.now() < end) {
+    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    if (!tab) return null;
+    if (tab.status === 'complete') return tab;
+    await sleep(250);
+  }
+  return chrome.tabs.get(tabId).catch(() => null);
+}
+
+const quoteList = (names) =>
+  names.length <= 1 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+
+// Does the action, then says what really happened: a new page (and which),
+// something that opened (and what is in it), or nothing at all.
+async function performAction(tab, action, settings, state) {
+  lastManualActivity = Date.now();
+  const say = (text, opts = {}) => speak(text, { rate: settings.rate, voiceName: settings.voiceName, ...opts });
+  if (action.type === 'scroll') {
+    const outcome = await messageTab(tab.id, { type: 'websight-action', action }).catch(() => ({ ok: false }));
+    const spoken = outcome.detail || 'I could not scroll this page.';
+    say(spoken);
+    return { answer: spoken, actionResult: outcome };
   }
 
-  let spoken = outcome.detail || (outcome.ok ? 'Done.' : 'That did not work.');
-  if (outcome.ok && action.type === 'click') {
-    // Give navigations a moment, then report where we ended up.
-    await new Promise((r) => setTimeout(r, 1500));
-    try {
-      const { title } = await messageTab(tab.id, { type: 'websight-title' });
-      if (title) spoken += ` You are now on: ${title}.`;
-    } catch {
-      spoken += ' The page is loading.';
+  const name = action.name || 'that';
+  earcon('working');
+  say(action.type === 'back' ? 'Going back.' : `${verbFor(action)[0].toUpperCase()}${verbFor(action).slice(1)} "${name}".`);
+  const before = await snapshot(tab.id);
+  let outcome;
+  try {
+    if (action.type === 'back') {
+      await chrome.tabs.goBack(tab.id);
+      outcome = { ok: true };
+    } else {
+      outcome = await messageTab(tab.id, { type: 'websight-action', action });
+    }
+  } catch {
+    outcome = action.type === 'back' ? { ok: false, detail: 'there is no previous page in this tab.' } : { ok: false };
+  }
+  if (!outcome || !outcome.ok) {
+    earcon('nothing');
+    const spoken = `I could not ${verbFor(action)} "${name}": ${outcome && outcome.detail ? outcome.detail : 'the page changed before I could.'}`;
+    say(spoken, { enqueue: true });
+    return { answer: spoken, actionResult: outcome };
+  }
+  if (action.type === 'focus' || action.type === 'fill') {
+    const spoken = action.type === 'fill' ? `Typed it into "${name}".` : `The cursor is on "${name}" now.`;
+    say(spoken, { enqueue: true });
+    return { answer: spoken, actionResult: outcome };
+  }
+
+  await sleep(1200);
+  let after = await snapshot(tab.id);
+  let spoken;
+  if (!after || (before && after.url !== before.url)) {
+    // A new page: wait for it, then name it. Its description follows.
+    const loaded = await waitForLoad(tab.id);
+    after = await snapshot(tab.id);
+    const title = (after && after.title) || (loaded && loaded.title) || '';
+    earcon('arrived');
+    spoken = title ? `Done. You are on a new page: ${title}.` : 'Done. A new page is loading.';
+    lastManualActivity = 0; // let the new page be described
+  } else {
+    const had = new Set(before ? before.names : []);
+    const added = after.names.filter((n) => !had.has(n));
+    if (after.dialogs > (before ? before.dialogs : 0)) {
+      earcon('opened');
+      spoken = `A window opened on top of the page${added.length ? `, with ${quoteList(added.slice(0, 6))}` : ''}.`;
+    } else if (added.length) {
+      earcon('opened');
+      const shown = added.slice(0, 8);
+      spoken = `That opened ${added.length} new option${added.length === 1 ? '' : 's'}: ${quoteList(shown)}${added.length > shown.length ? ', and more' : ''}.`;
+    } else {
+      earcon('nothing');
+      spoken = `I pressed "${name}", but I cannot see anything change on the page.`;
     }
   }
-  speak(spoken, { rate: settings.rate, enqueue, voiceName: settings.voiceName });
+  say(spoken, { enqueue: true });
   return { answer: spoken, actionResult: outcome };
 }
 

@@ -99,6 +99,8 @@
         sendResponse(executeAction(msg.action));
       } else if (msg.type === 'websight-title') {
         sendResponse({ title: document.title });
+      } else if (msg.type === 'websight-snapshot') {
+        sendResponse(window.__websight.snapshot());
       } else if (msg.type === 'websight-scan-info') {
         sendResponse({
           scrollY: window.scrollY,

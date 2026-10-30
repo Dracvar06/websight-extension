@@ -32,6 +32,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     sendResponse({ ok: true });
     return false;
   }
+  if (msg.type === 'websight-earcon') {
+    earcon(msg.kind);
+    sendResponse({ ok: true });
+    return false;
+  }
   if (msg.type === 'websight-tts-stop') {
     stopAll();
     sendResponse({ ok: true });
@@ -84,4 +89,33 @@ async function playNext() {
   }
   playing = false;
   playNext();
+}
+
+// Short sounds that say what an action did, before any words: a sighted
+// person sees the page change; these let you hear it.
+const EARCONS = {
+  working: [[660, 0.06]],
+  arrived: [[523, 0.09], [784, 0.14]],
+  opened: [[784, 0.1]],
+  nothing: [[220, 0.22]],
+};
+
+function earcon(kind) {
+  const notes = EARCONS[kind];
+  if (!notes) return;
+  const ctx = new AudioContext();
+  let t = ctx.currentTime;
+  for (const [freq, length] of notes) {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.frequency.value = freq;
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(0.12, t + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + length);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(t);
+    osc.stop(t + length);
+    t += length + 0.03;
+  }
+  setTimeout(() => ctx.close(), (t - ctx.currentTime) * 1000 + 200);
 }
