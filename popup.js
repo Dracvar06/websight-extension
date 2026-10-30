@@ -141,6 +141,34 @@ async function toWav(blob) {
   src.connect(off.destination);
   src.start();
   const mono = (await off.startRendering()).getChannelData(0);
+  const wav = new Blob([wavBytes(mono, rate)], { type: 'audio/wav' });
+  return { wav, speech: speechSeconds(mono, rate) };
+}
+
+// How long the recording is louder than background noise. Whisper turns
+// silence into confident words ("you", "Thank you", "Obrigado."), which
+// would be sent as a question nobody asked, so a recording with no real
+// sound in it is never transcribed at all.
+function speechSeconds(mono, rate) {
+  const frame = Math.round(rate * 0.03);
+  let loud = 0;
+  for (let i = 0; i + frame <= mono.length; i += frame) {
+    let sum = 0;
+    for (let j = i; j < i + frame; j++) sum += mono[j] * mono[j];
+    if (Math.sqrt(sum / frame) > 0.01) loud++;
+  }
+  return (loud * frame) / rate;
+}
+
+// Phrases Whisper is known to produce from silence or room noise. A
+// transcript that is only one of these is treated as nothing heard.
+const PHANTOMS = /^(you|thank you|thanks|thanks for watching|thank you for watching|bye|obrigado|obrigada|gracias|gràcies|merci|danke|grazie|subtitles by.*|amara\.org.*|\.+|…)$/i;
+
+function isPhantom(text) {
+  return PHANTOMS.test(text.trim().replace(/[.!?¡¿,\s]+$/u, '').replace(/^[¡¿\s]+/u, '')) || /^[\p{P}\s]*$/u.test(text);
+}
+
+function wavBytes(mono, rate) {
   const out = new DataView(new ArrayBuffer(44 + mono.length * 2));
   const writeStr = (o, s) => {
     for (let i = 0; i < s.length; i++) out.setUint8(o + i, s.charCodeAt(i));
@@ -162,7 +190,7 @@ async function toWav(blob) {
     const s = Math.max(-1, Math.min(1, mono[i]));
     out.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
   }
-  return new Blob([out.buffer], { type: 'audio/wav' });
+  return out.buffer;
 }
 
 function stopRecordingAndSend() {
@@ -180,7 +208,15 @@ function stopRecordingAndSend() {
     }
     setStatus('Transcribing...', 'thinking');
     try {
-      const text = await transcribe(await toWav(blob));
+      const { wav, speech } = await toWav(blob);
+      if (speech < 0.25) {
+        setStatus('I did not hear any words. Press Talk to try again, or type.');
+        beep(330, 200);
+        questionInput.focus();
+        return;
+      }
+      let text = await transcribe(wav);
+      if (isPhantom(text)) text = '';
       const typed = questionInput.value.trim();
       questionInput.value = '';
       const question = (typed ? typed + ' ' : '') + text;
