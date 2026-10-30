@@ -53,7 +53,7 @@ async function main() {
     args: [
       '--use-fake-ui-for-media-stream',
       '--use-fake-device-for-media-stream',
-      `--use-file-for-fake-audio-capture=${join(root, 'test', 'audio', 'test-en.wav')}`,
+      `--use-file-for-fake-audio-capture=${process.env.WS_MIC_FILE || join(root, 'test', 'audio', 'test-en.wav')}`,
       '--autoplay-policy=no-user-gesture-required',
     ],
   });
