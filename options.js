@@ -15,11 +15,11 @@ const DEFAULTS = {
   autoDescribe: true,
   ttsEngine: 'neural',
   ttsUrl: 'http://localhost:8100/v1',
-  speechEngine: 'browser',
+  speechEngine: 'whisper',
   speechLang: 'auto',
-  whisperUrl: 'https://api.groq.com/openai/v1',
+  whisperUrl: 'http://localhost:8100/v1',
   whisperKey: '',
-  whisperModel: 'whisper-large-v3-turbo',
+  whisperModel: 'deepdml/faster-whisper-large-v3-turbo-ct2',
   aboutMe: '',
 };
 

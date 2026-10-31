@@ -121,18 +121,18 @@
 
     <label for="speechEngine">Speech recognition engine</label>
     <select id="speechEngine" aria-describedby="engine-note">
-      <option value="browser">Browser - one language, live transcript, no key needed</option>
-      <option value="whisper">Whisper - ANY language auto-detected, needs a free Groq key</option>
+      <option value="whisper">Whisper on this computer - any language, free and private</option>
+      <option value="browser">Browser - one language, live transcript, sends your voice to Google</option>
     </select>
     <p class="note" id="engine-note">Whisper large v3 turbo understands every language and detects which one you speak automatically. By default it uses the local voice server on this computer (free, private, no key). It can also point at any OpenAI-compatible Whisper server, or at Groq's cloud (<a href="https://console.groq.com/keys" target="_blank">free key</a>, address https://api.groq.com/openai/v1). If the configured server does not answer, the local one is used automatically.</p>
 
-    <label for="whisperKey">Whisper API key (Groq)</label>
+    <label for="whisperKey">Whisper API key (only for Groq or another cloud server)</label>
     <input type="password" id="whisperKey" autocomplete="off">
     <label for="whisperUrl">Whisper server address</label>
     <input type="text" id="whisperUrl">
     <label for="whisperModel">Whisper model</label>
     <input type="text" id="whisperModel" aria-describedby="whisper-model-note">
-    <p class="note" id="whisper-model-note">Default: whisper-large-v3-turbo</p>
+    <p class="note" id="whisper-model-note">Local server: deepdml/faster-whisper-large-v3-turbo-ct2. Groq: whisper-large-v3-turbo.</p>
     <button type="button" id="test-whisper">Test Whisper server</button>
     <p class="note" id="whisper-status" role="status" aria-live="polite"></p>
 

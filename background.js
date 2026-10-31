@@ -1471,6 +1471,18 @@ async function performAction(tab, action, settings, state) {
   return { answer: spoken, actionResult: outcome };
 }
 
+// Settings saved by older versions point Whisper at Groq with no key, which
+// cannot work; the local voice server does the same job, free and private.
+chrome.storage.local.get(['speechEngine', 'whisperUrl', 'whisperKey']).then((s) => {
+  if (s.whisperUrl && /groq\.com/.test(s.whisperUrl) && !s.whisperKey) {
+    chrome.storage.local.set({
+      whisperUrl: 'http://localhost:8100/v1',
+      whisperModel: 'deepdml/faster-whisper-large-v3-turbo-ct2',
+      ...(s.speechEngine === 'browser' ? { speechEngine: 'whisper' } : {}),
+    });
+  }
+});
+
 // ---- messages from popup and options ----
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {

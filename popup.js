@@ -25,7 +25,7 @@ let mediaStream = null;
 let audioChunks = [];
 
 let settings = {
-  speechEngine: 'browser',
+  speechEngine: 'whisper',
   speechLang: 'auto',
   whisperUrl: 'http://localhost:8100/v1',
   whisperKey: '',
