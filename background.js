@@ -748,6 +748,8 @@ function protectedPage(url = '') {
   return 'This is one of Chrome\'s own pages, which Chrome does not let extensions read.';
 }
 
+const KIND_OF_PLACE = /^(?:(?:the|a)\s+)?(?:supermarkets?|stores?|shops?|chain|company|companies|brand|restaurants?|bank|airline|hotels?|hospital|museum|university|college|school|newspaper|shop online|online store|supermercat|supermercado|tienda|botiga|empresa|banco|banc)$/i;
+
 function noteDown(state, line) {
   state.notes = [...(state.notes || []), `- ${line}`].slice(-12);
 }
@@ -792,7 +794,8 @@ async function goToSite(tab, site, settings, provider, state) {
       const org = await officialSite(split.name);
       trace('official site for', split.name, '->', JSON.stringify(org && { url: org.url, unsure: org.unsure }));
       if (!org || org.unsure) continue;
-      if (site.heard) return go(org.url, `Going to ${org.host}, the official website of ${org.label}.`);
+      // "Caprabo supermarket": the rest only says what Caprabo is.
+      if (site.heard || KIND_OF_PLACE.test(split.page)) return go(org.url, `Going to ${org.host}, the official website of ${org.label}.`);
       say(`Looking for ${split.page} on ${org.host}, the official website of ${org.label}.`);
       const went = await goToPageOnSite(tab, split.page, settings, state, org.host);
       if (went) return went;
