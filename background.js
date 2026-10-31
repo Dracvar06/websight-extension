@@ -3,6 +3,7 @@
 // chrome.tts, and executes confirmed actions through the content script.
 import { getProvider } from './lib/provider.js';
 import { unverifiedNumbers, numbersNote } from './lib/check-numbers.js';
+import { pickLinks, bestPassages } from './lib/scout.js';
 
 const DEFAULT_SETTINGS = {
   provider: 'gemini',
@@ -23,7 +24,7 @@ const DEFAULT_SETTINGS = {
 // Element texts that require a spoken confirmation before acting.
 const DANGEROUS = /(buy|purchase|order|pay|checkout|confirm|delete|remove|submit|send|subscribe|transfer|comprar|pagar|pedido|eliminar|borrar|enviar|kaufen|bezahlen|bestellen|löschen|senden|acheter|payer|supprimer|envoyer|acquista|paga|elimina|invia)/i;
 const CLAIMS_ACTION = /\b(I'?ve|I have|I just|I)\s+(clicked|pressed|opened|taken you|gone|went|scrolled|typed|filled|submitted|navigated|moved you|brought you)\b|^(done|clicked|opened)\b/i;
-const NOT_HERE = /\b(don'?t|do not|can'?t|cannot|could ?n[o']t) (see|find)\b|\b(does ?n[o']t|do not|doesn'?t) (have|list|show|mention|include|contain|say)\b|\bno (information|details|mention)\b|\bnot (sure|listed|shown|mentioned|on this page)\b|\bisn'?t (listed|shown|here|on)\b/i;
+const NOT_HERE = /\b(don'?t|do not|can'?t|cannot|could ?n[o']t) (see|find)\b|\b(does ?n[o']t|do not|doesn'?t) (have|list|show|mention|include|contain|say|state|give|provide|specify)\b|\bno (information|details|mention)\b|\bnot (sure|listed|shown|mentioned|on this page)\b|\bisn'?t (listed|shown|here|on)\b/i;
 const IS_QUESTION = /\?$|^(what|when|where|who|whom|which|why|how|is|are|was|were|do|does|did|can|could|should|will|would|has|have|qu[eé]|quan|quin|quina|on|com|qui|cu[aá]ndo|d[oó]nde|qui[eé]n|c[oó]mo|cu[aá]l)\b/i;
 // Each decision handleAsk makes, for the end-to-end test (dev/e2e.mjs
 // turns it on). Off for everyone else.
@@ -70,8 +71,8 @@ async function ensureOffscreen() {
   if (contexts.length) return;
   await chrome.offscreen.createDocument({
     url: 'offscreen.html',
-    reasons: ['AUDIO_PLAYBACK'],
-    justification: 'Play neural text-to-speech audio for spoken answers',
+    reasons: ['AUDIO_PLAYBACK', 'DOM_PARSER'],
+    justification: 'Play spoken answers, and read nearby pages of a site as text to find answers on them',
   });
 }
 
@@ -206,6 +207,7 @@ async function autoDescribe(tabId, windowId, key) {
     const provider = getProvider(settings);
     if (provider.needsKey && !provider.apiKey) return;
     const extraction = await messageTab(tabId, { type: 'websight-extract' });
+    scoutAround(tabId, extraction); // in the background, while it describes
     let screenshotBase64 = '';
     if (provider.vision) {
       const cached = fullShots.get(tabId);
@@ -352,6 +354,57 @@ async function captureFullPage(tabId, windowId) {
   return stitchScreenshots(shots, 1024);
 }
 
+// ---- scouting (lib/scout.js): nearby pages read ahead, as plain text ----
+
+const scouted = new Map(); // page url -> { t, pages: Promise<page[]> }
+
+function scoutAround(tabId, extraction) {
+  const url = sansHash(extraction.pageText.match(/^URL: (.*)$/m)?.[1] || '');
+  if (!url) return Promise.resolve([]);
+  const cached = scouted.get(url);
+  if (cached && Date.now() - cached.t < 10 * 60000) return cached.pages;
+  const links = pickLinks(extraction.elements || [], url);
+  const pages = ensureOffscreen()
+    .then(() => chrome.runtime.sendMessage({ type: 'websight-scout', urls: links.map((l) => l.url) }))
+    .then((r) => (r && r.pages) || [])
+    .catch(() => []);
+  scouted.set(url, { t: Date.now(), pages });
+  for (const [key, value] of scouted) if (Date.now() - value.t > 10 * 60000) scouted.delete(key);
+  pages.then((p) => trace('scouted', p.length, 'of', links.length, 'nearby pages for', url));
+  return pages;
+}
+
+// The answer from the nearby pages, or null. The model sees only the few
+// passages that match the question, numbered, and says which one it used.
+async function answerFromScouting(provider, question, extraction, history) {
+  const pages = await Promise.race([scoutAround(null, extraction), sleep(12000).then(() => [])]);
+  const best = bestPassages(question, pages, 4);
+  trace('best passages:', JSON.stringify(best.map((b) => [b.page.title, b.heading, b.score.toFixed(1)])));
+  if (!best.length) return null;
+  const text = best
+    .map((b, i) => `[${i + 1}] From the page "${b.page.title}" (${b.page.url})${b.heading ? `, under "${b.heading}"` : ''}:\n${b.text}`)
+    .join('\n\n');
+  const result = await provider
+    .ask({
+      history,
+      question: `${question}\n\n(Note from the app: the answer is not on the page they are on. Above are passages from nearby pages of the same site, numbered. If one of them answers the question, answer from it, copy its exact words into "quote", and set "source" to its number. If none does, say so and set "source" to 0. Use no other knowledge. Answer directly (\"UCSB has 24,673 students\"), without mentioning passages or nearby pages: the app says where it is.)`,
+      pageText: `PASSAGES FROM NEARBY PAGES (read by the app; the person is not on these pages):\n\n${text}`,
+      screenshotBase64: '',
+    })
+    .catch(() => null);
+  trace('answer from nearby pages ->', JSON.stringify(result && { answer: result.answer, source: result.source, quote: result.quote }));
+  if (!result || result.action || NOT_HERE.test(result.answer)) return null;
+  let source = result.source >= 1 && result.source <= best.length ? result.source : 0;
+  // Small models often quote the right passage and forget its number.
+  if (!source && result.quote) {
+    const q = result.quote.toLowerCase().replace(/\s+/g, ' ').trim();
+    const i = best.findIndex((b) => b.text.toLowerCase().replace(/\s+/g, ' ').includes(q.slice(0, 60)));
+    if (i >= 0) source = i + 1;
+  }
+  if (!source) return null;
+  return { result, page: best[source - 1].page };
+}
+
 // ---- main flow ----
 
 async function handleAsk(question) {
@@ -393,6 +446,7 @@ async function handleAsk(question) {
   let screenshotBase64 = '';
   try {
     extraction = await messageTab(tab.id, { type: 'websight-extract' });
+    scoutAround(tab.id, extraction); // usually already done when the page loaded
     if (provider.vision) {
       const cached = fullShots.get(tab.id);
       if (cached && cached.key === pageKey(tab.url) && Date.now() - cached.t < 180000) {
@@ -500,7 +554,31 @@ async function handleAsk(question) {
     result = again && again.action ? again : { answer: 'I could not find a way to do that on this page.', lang: result.lang, action: null };
   }
   const firstAnswer = result;
-  if (result && !result.action && (NOT_HERE.test(result.answer) || PROMISES.test(result.answer))) {
+  // Not on this page: first the nearby pages read ahead. If one has it,
+  // take them there and put them on the line.
+  let takenTo = '';
+  if (result && !result.action && IS_QUESTION.test(question.trim()) && (NOT_HERE.test(result.answer) || PROMISES.test(result.answer))) {
+    const found = await answerFromScouting(provider, question, extraction, state.history);
+    if (found) {
+      earcon('working');
+      await chrome.tabs.update(tab.id, { url: found.page.url }).catch(() => null);
+      await waitForNavigation(tab.id, tab.url, 4000);
+      const loaded = await waitForLoad(tab.id);
+      lastManualActivity = Date.now(); // this answer replaces its description
+      try {
+        await sleep(500);
+        extraction = await messageTab(tab.id, { type: 'websight-extract' });
+        earcon('arrived');
+        takenTo = (loaded && loaded.title) || found.page.title;
+        result = { ...found.result, action: null };
+      } catch {
+        // Could not open it: still answer, and say where it is.
+        result = { ...found.result, action: null, answer: `${found.result.answer} That is on the page "${found.page.title}", but I could not open it.` };
+        extraction = { ...extraction, pageText: extraction.pageText + '\n' + found.page.text };
+      }
+    }
+  }
+  if (!takenTo && result && !result.action && (NOT_HERE.test(result.answer) || PROMISES.test(result.answer))) {
     // "I don't see that here, I can look if you like": a small model offers
     // instead of looking far more often than it picks a link. Asking it only
     // which link to try is a narrow choice it makes well.
@@ -513,7 +591,9 @@ async function handleAsk(question) {
       })
       .catch(() => null);
     trace('which link?', JSON.stringify(pick && pick.action));
-    if (pick && pick.action && pick.action.type === 'explore') result = { ...pick, lang: result.lang || pick.lang };
+    if (pick && pick.action && (pick.action.type === 'explore' || pick.action.type === 'click')) {
+      result = { ...pick, action: { ...pick.action, type: 'explore' }, lang: result.lang || pick.lang };
+    }
   }
   while (result && result.action && result.action.type === 'explore') {
     const link = extraction.elements.find((e) => e.index === result.action.index);
@@ -610,7 +690,11 @@ async function handleAsk(question) {
       numbers: (result.answer.match(/\d[\d.,:/]*\d|\d{2,}/g) || []).filter((n) => !missing.includes(n)),
     }).catch(() => null);
     trace('show me where:', JSON.stringify(result.quote), '->', JSON.stringify(shown));
-    if (shown && shown.ok) spoken += ' I have put the cursor on that line, so your screen reader can read it from the page.';
+    if (takenTo) {
+      spoken += ` That is on the page "${takenTo}", so I have taken you there${shown && shown.ok ? ' and put the cursor on that line' : ''}. Say "go back" to return.`;
+    } else if (shown && shown.ok) {
+      spoken += ' I have put the cursor on that line, so your screen reader can read it from the page.';
+    }
     speak(spoken, { lang: result.lang, rate: settings.rate, voiceName: settings.voiceName });
     return { answer: spoken, note: fallbackNote || undefined };
   }

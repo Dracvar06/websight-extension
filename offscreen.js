@@ -32,6 +32,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     sendResponse({ ok: true });
     return false;
   }
+  if (msg.type === 'websight-scout') {
+    scout(msg.urls).then(sendResponse, () => sendResponse({ pages: [] }));
+    return true;
+  }
   if (msg.type === 'websight-earcon') {
     earcon(msg.kind);
     sendResponse({ ok: true });
@@ -118,4 +122,68 @@ function earcon(kind) {
     t += length + 0.03;
   }
   setTimeout(() => ctx.close(), (t - ctx.currentTime) * 1000 + 200);
+}
+
+// ---- scouting: read nearby pages as plain text (see lib/scout.js) ----
+
+const BLOCK = /^(P|LI|TD|TH|DT|DD|H[1-6]|DIV|SECTION|ARTICLE|TR|BLOCKQUOTE|FIGCAPTION|LABEL|BR)$/;
+
+function pageText(doc) {
+  // Not "form": some sites (UChicago admissions) wrap the whole page in one.
+  doc.querySelectorAll('script, style, noscript, svg, template, iframe, nav, footer, select, [aria-hidden="true"]').forEach((el) => el.remove());
+  const root = doc.querySelector('main, [role="main"], article') || doc.body;
+  if (!root) return '';
+  const lines = [];
+  let current = null;
+  let line = '';
+  const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const text = node.textContent.replace(/\s+/g, ' ');
+    if (!text.trim()) continue;
+    let block = node.parentElement;
+    while (block && block !== root && !BLOCK.test(block.tagName)) block = block.parentElement;
+    if (block !== current) {
+      if (line.trim()) lines.push(line.trim());
+      line = /^H[1-4]$/.test(block && block.tagName) ? '# ' : '';
+      current = block;
+    }
+    line += text;
+  }
+  if (line.trim()) lines.push(line.trim());
+  return lines.join('\n').slice(0, 30000);
+}
+
+async function fetchPage(url) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 6000);
+  try {
+    // No cookies: the page as anyone would see it, and nothing done as them.
+    const res = await fetch(url, { credentials: 'omit', redirect: 'follow', signal: controller.signal });
+    const type = res.headers.get('content-type') || '';
+    if (!res.ok || !type.includes('text/html')) return null;
+    const html = (await res.text()).slice(0, 1500000);
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const title = (doc.title || '').trim();
+    const text = pageText(doc);
+    return text.length > 100 ? { url: res.url || url, title, text } : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function scout(urls) {
+  const pages = [];
+  const queue = [...urls];
+  // Four at a time: quick, and gentle on the site.
+  await Promise.all(
+    Array.from({ length: 4 }, async () => {
+      while (queue.length) {
+        const page = await fetchPage(queue.shift());
+        if (page) pages.push(page);
+      }
+    })
+  );
+  return { pages };
 }
