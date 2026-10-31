@@ -4,3 +4,5 @@
 models/
 # Neural TTS server: cloned speaches repo, its venv, and downloaded voice models
 tts-server/
+# Local search server: cloned SearXNG, its venv and its settings (secret key)
+search-server/

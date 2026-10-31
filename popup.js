@@ -30,6 +30,7 @@ let settings = {
   whisperUrl: 'http://localhost:8100/v1',
   whisperKey: '',
   whisperModel: 'deepdml/faster-whisper-large-v3-turbo-ct2',
+  aboutMe: '',
 };
 
 document.getElementById('open-options').addEventListener('click', (e) => {
@@ -121,7 +122,13 @@ async function startRecording() {
   recorder.ondataavailable = (e) => {
     if (e.data.size) audioChunks.push(e.data);
   };
-  recorder.start();
+  // The beep means "talk now", so it waits until audio is really being
+  // recorded: a Bluetooth headset can take a moment to switch its mic on,
+  // and the first word ("take me to...") would be lost.
+  const started = new Promise((resolve) => (recorder.onstart = resolve));
+  recorder.start(250);
+  await Promise.race([started, new Promise((r) => setTimeout(r, 1500))]);
+  await new Promise((r) => setTimeout(r, 150));
   listening = true;
   setTalkUI(true);
   beep(880, 120);
@@ -259,10 +266,24 @@ async function transcribe(blob) {
   }
 }
 
+let pageTitleHint = '';
+chrome.tabs.query({ active: true, currentWindow: true }).then(([t]) => (pageTitleHint = (t && t.title) || '')).catch(() => {});
+
+function whisperHint() {
+  const about = (settings.aboutMe || '').replace(/\s+/g, ' ').slice(0, 300);
+  return `Take me to the website. Search this site for it. What does this page say? ${pageTitleHint ? pageTitleHint.slice(0, 120) + '. ' : ''}${about}`.trim();
+}
+
 async function transcribeWith(blob, { url, model, key }) {
   const body = new FormData();
   body.append('file', blob, 'question.wav');
   body.append('model', model);
+  // Words to expect: the usual commands, this page's title and what they
+  // wrote about themselves, so "take me to Técnico" is not heard as "jake
+  // me to take Niko". A chosen language is used instead of guessing it
+  // from a few seconds of audio.
+  body.append('prompt', whisperHint());
+  if (settings.speechLang && settings.speechLang !== 'auto') body.append('language', settings.speechLang.slice(0, 2).toLowerCase());
   const headers = {};
   if (key) headers.Authorization = `Bearer ${key}`;
   let res;

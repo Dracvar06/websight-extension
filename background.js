@@ -732,6 +732,16 @@ function pickSaidOption(question, options, elements) {
   return elements.find((e) => e.name === hits[0]) || null;
 }
 
+// Chrome lets no extension read or photograph its own pages, for safety,
+// so say what the page is instead of "I could not read it".
+function protectedPage(url = '') {
+  if (/^chrome:\/\/(newtab|new-tab-page)|^chrome-search:|^about:blank|^$/.test(url)) return 'This is a new tab, with no website open yet.';
+  if (/chromewebstore|chrome\.google\.com\/webstore/.test(url)) return 'This is the Chrome Web Store, which Chrome does not let extensions read.';
+  if (/^chrome:\/\/settings/.test(url)) return "This is Chrome's settings, which Chrome does not let extensions read.";
+  if (/^chrome:\/\/extensions/.test(url)) return "This is Chrome's extensions page, which Chrome does not let extensions read.";
+  return 'This is one of Chrome\'s own pages, which Chrome does not let extensions read.';
+}
+
 function noteDown(state, line) {
   state.notes = [...(state.notes || []), `- ${line}`].slice(-12);
 }
@@ -739,6 +749,14 @@ function noteDown(state, line) {
 async function goToSite(tab, site, settings, provider, state) {
   const say = (text) => speak(text, { rate: settings.rate, voiceName: settings.voiceName });
   const go = async (url, words) => {
+    if (site.heard && !site.confirmed) {
+      // Said without "take me to", maybe misheard: a yes first.
+      state.pendingAction = { type: 'goto', url, name: site.name };
+      await setTabState(tab.id, state);
+      const msg = `I heard "${site.heard}". ${words.replace(/^Going to /, 'Do you want ').replace(/\.$/, '')}? Say yes to go there.`;
+      say(msg);
+      return { answer: msg, pendingConfirmation: true };
+    }
     say(words);
     earcon('working');
     noteDown(state, `Went to ${url} (${words.replace(/^Going to /, '').slice(0, 120)})`);
@@ -768,6 +786,7 @@ async function goToSite(tab, site, settings, provider, state) {
       const org = await officialSite(split.name);
       trace('official site for', split.name, '->', JSON.stringify(org && { url: org.url, unsure: org.unsure }));
       if (!org || org.unsure) continue;
+      if (site.heard) return go(org.url, `Going to ${org.host}, the official website of ${org.label}.`);
       say(`Looking for ${split.page} on ${org.host}, the official website of ${org.label}.`);
       const went = await goToPageOnSite(tab, split.page, settings, state, org.host);
       if (went) return went;
@@ -788,7 +807,9 @@ async function goToSite(tab, site, settings, provider, state) {
   const title = guess.url ? await pageTitle(guess.url) : '';
   trace('unconfirmed guess', guess.url, JSON.stringify(title));
   if (!guess.url || !title) {
-    const msg = `I could not find the official website of ${site.name}. If you know its address, say "go to" and the address.`;
+    const msg = site.heard
+      ? `I heard "${site.heard}", and could not find a website called ${site.name}. If I misheard, say it again, or say "go to" and the address.`
+      : `I could not find the official website of ${site.name}. If you know its address, say "go to" and the address.`;
     say(msg);
     return { answer: msg };
   }
@@ -857,8 +878,19 @@ async function answerQuestion(question) {
       if (went) return went;
     }
   }
+  // "Search for cheap flights" on a new tab: the person's own default
+  // search engine, as if typed in the address bar.
+  const searchHere = !onWebPage && !state.pendingAction && question.trim().match(SEARCH_COMMAND);
+  if (searchHere) {
+    const words = `Searching for "${searchHere[1].trim()}".`;
+    speak(words, { rate: settings.rate, voiceName: settings.voiceName });
+    earcon('working');
+    await chrome.search.query({ text: searchHere[1].trim(), tabId: tab.id });
+    lastManualActivity = 0;
+    return { answer: words };
+  }
   if (!onWebPage && !state.pendingAction) {
-    const msg = 'This tab has no web page for me to read. Say "take me to" and a website, for example "take me to the UChicago website".';
+    const msg = `${protectedPage(tab.url)} Say a website to go to, for example "take me to the UChicago website", or "search for" and what you want to find.`;
     speak(msg, { rate: settings.rate, voiceName: settings.voiceName });
     return { answer: msg, error: true };
   }
@@ -875,7 +907,9 @@ async function answerQuestion(question) {
     if (!question.trim() || /^(no|nope|cancel|stop)\b/i.test(question.trim())) {
       return { answer: 'Okay, cancelled.' };
     }
-    // Fall through: treat what they said as a new question.
+    // Treat what they said as a new question, from the start (it may be
+    // a site to go to, or this may be a new tab).
+    return answerQuestion(question);
   }
 
   let extraction;
@@ -885,7 +919,9 @@ async function answerQuestion(question) {
     scoutAround(tab.id, extraction); // usually already done when the page loaded
     if (provider.vision) screenshotBase64 = await captureScreenshot(tab.windowId);
   } catch (err) {
-    const msg = 'I could not read this page. Try reloading it and asking again.';
+    const msg = /^https:\/\/(chromewebstore\.google\.com|chrome\.google\.com\/webstore)/.test(tab.url || '')
+      ? `${protectedPage(tab.url)} You can still say a website to go to.`
+      : 'I could not read this page. Try reloading it and asking again.';
     speak(msg, { rate: settings.rate, voiceName: settings.voiceName });
     return { answer: msg, error: true, detail: String(err) };
   }
