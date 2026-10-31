@@ -180,12 +180,19 @@ async function main() {
         await popup.close().catch(() => {});
         await sleep(3000); // a click may be loading a new page
         const text = await pageText();
+        // Where the keyboard focus is on the page: "show me where" puts it on
+        // the line the answer came from.
+        const focused = await page.evaluate(() => {
+          const el = document.activeElement;
+          return el && el !== document.body ? el.innerText.replace(/\s+/g, ' ').trim().slice(0, 160) : '';
+        }).catch(() => '');
+        console.log('  focus on page:', JSON.stringify(focused));
         const remembered = await sw.evaluate(async () => {
           const all = await chrome.storage.session.get(null);
           return Object.entries(all).filter(([k]) => k.startsWith('tab:')).map(([k, v]) => `${k}=${v.history.length}`).join(' ');
         });
         console.log('  conversation turns stored:', remembered);
-        results.steps.push({ step: 'question', question, answer, said, seconds, url: page.url(), pageTextChars: text.length, pageText: text });
+        results.steps.push({ step: 'question', question, answer, said, focused, seconds, url: page.url(), pageTextChars: text.length, pageText: text });
         console.log(`Q: ${question}\n  said: ${said.join(' | ')}\n  A: ${answer} (${seconds.toFixed(1)} s, now on ${page.url()}, page text ${text.length} chars)`);
       }
       return;

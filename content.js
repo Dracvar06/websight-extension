@@ -88,6 +88,85 @@
     return { ok: false, detail: `Unknown action type ${action.type}.` };
   }
 
+  // "Show me where": puts the keyboard focus on the element holding the
+  // words an answer rests on, so the person's own screen reader reads the
+  // real page text: a second witness that does not depend on the AI. Also
+  // outlined for a sighted helper. Falls back to the numbers in the answer.
+  const squash = (t) => (t || '').toLowerCase().replace(/[\u2018\u2019]/g, "'").replace(/[\u201c\u201d]/g, '"').replace(/\s+/g, ' ').trim();
+  const STOP = new Set('the a an and or of to in on for is are was what when where who how do does i my me you your it this that with at by be can from as'.split(' '));
+  const BLOCKS = 'p, li, td, th, dd, dt, h1, h2, h3, h4, h5, h6, blockquote, figcaption, label, a, button, span, strong, em, div, section, article';
+
+  const wordsOf = (t) => new Set(squash(t).match(/[\p{L}\p{N}]+/gu) || []);
+
+  // How well the text around an element (its heading, its card) matches
+  // what was asked. The same line can appear more than once: UChicago lists
+  // "APPLICATION DEADLINE Jan 4, 2027" under both Early Decision II and
+  // Regular Decision, and only the heading tells them apart.
+  function fit(el, context) {
+    let around = el.parentElement;
+    const own = squash(el.innerText).length;
+    while (around && around.parentElement && squash(around.innerText).length <= own) around = around.parentElement;
+    if (!around) return 0;
+    const near = wordsOf(squash(around.innerText).slice(0, 500));
+    let hits = 0;
+    for (const w of context) if (near.has(w)) hits++;
+    return hits;
+  }
+
+  function smallestHolding(needle, context) {
+    const holding = [];
+    for (const el of document.body.querySelectorAll(BLOCKS)) {
+      if (!el.offsetParent && el.tagName !== 'BODY') continue; // hidden
+      if (squash(el.innerText).includes(needle)) holding.push(el);
+    }
+    // Keep only the innermost: an element none of whose children also holds it.
+    const innermost = holding.filter((el) => !holding.some((other) => other !== el && el.contains(other)));
+    let best = null;
+    let bestFit = -1;
+    for (const el of innermost) {
+      const f = fit(el, context);
+      if (f > bestFit || (f === bestFit && squash(el.innerText).length < squash(best.innerText).length)) {
+        best = el;
+        bestFit = f;
+      }
+    }
+    return best;
+  }
+
+  function showLine(quote, numbers, about) {
+    const context = new Set([...wordsOf(about)].filter((w) => w.length >= 2 && !STOP.has(w)));
+    let el = null;
+    const q = squash(quote);
+    if (q.length >= 4) {
+      el = smallestHolding(q, context);
+      // Models trim or tweak a quote; try its first and last halves.
+      if (!el) {
+        const words = q.split(' ');
+        if (words.length >= 6) {
+          el = smallestHolding(words.slice(0, Math.ceil(words.length / 2)).join(' '), context) ||
+            smallestHolding(words.slice(Math.floor(words.length / 2)).join(' '), context);
+        }
+      }
+    }
+    for (const n of numbers) {
+      if (el) break;
+      if (String(n).length >= 2) el = smallestHolding(squash(String(n)), context);
+    }
+    if (!el) return { ok: false };
+    // A short card around the line (its heading plus the line) is read
+    // instead, so "Jan 4, 2027" is heard with "Early Decision II".
+    let card = el.parentElement;
+    while (card && squash(card.innerText).length <= squash(el.innerText).length) card = card.parentElement;
+    if (card && card !== document.body && squash(card.innerText).length <= 250) el = card;
+    if (el.tabIndex < 0 && !el.hasAttribute('tabindex')) el.setAttribute('tabindex', '-1');
+    el.scrollIntoView({ block: 'center', behavior: 'instant' });
+    el.focus({ preventScroll: true });
+    const before = el.style.outline;
+    el.style.outline = '4px solid #f5a623';
+    setTimeout(() => (el.style.outline = before), 8000);
+    return { ok: true, text: el.innerText.replace(/\s+/g, ' ').trim().slice(0, 200) };
+  }
+
   // Exposed for testing outside the extension context.
   (window.__websight = window.__websight || {}).executeAction = executeAction;
 
@@ -99,6 +178,8 @@
         sendResponse(executeAction(msg.action));
       } else if (msg.type === 'websight-title') {
         sendResponse({ title: document.title });
+      } else if (msg.type === 'websight-show') {
+        sendResponse(showLine(msg.quote || '', msg.numbers || [], msg.about || ''));
       } else if (msg.type === 'websight-snapshot') {
         sendResponse(window.__websight.snapshot());
       } else if (msg.type === 'websight-scan-info') {

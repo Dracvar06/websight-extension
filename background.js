@@ -2,6 +2,7 @@
 // (screenshot + structured text), asks the AI, speaks the answer via
 // chrome.tts, and executes confirmed actions through the content script.
 import { getProvider } from './lib/provider.js';
+import { unverifiedNumbers, numbersNote } from './lib/check-numbers.js';
 
 const DEFAULT_SETTINGS = {
   provider: 'gemini',
@@ -592,8 +593,26 @@ async function handleAsk(question) {
 
   if (!result.action) {
     await setTabState(tab.id, state);
-    speak(result.answer, { lang: result.lang, rate: settings.rate, voiceName: settings.voiceName });
-    return { answer: result.answer, note: fallbackNote || undefined };
+    let spoken = result.answer;
+    // Numbers not written on the page are named, so they know exactly what
+    // to double-check. (The page text is what the answer was given; a
+    // number read only from the screenshot is flagged too, on purpose.)
+    const missing = unverifiedNumbers(result.answer, extraction.pageText, question);
+    if (missing.length) trace('numbers not on the page:', missing.join(', '));
+    spoken += numbersNote(missing);
+    // Then put them on the line it came from, to check with their own
+    // screen reader.
+    // Nothing to point at when the answer is that it is not there.
+    const shown = NOT_HERE.test(result.answer) ? null : await messageTab(tab.id, {
+      type: 'websight-show',
+      quote: result.quote || '',
+      about: `${question} ${result.answer}`,
+      numbers: (result.answer.match(/\d[\d.,:/]*\d|\d{2,}/g) || []).filter((n) => !missing.includes(n)),
+    }).catch(() => null);
+    trace('show me where:', JSON.stringify(result.quote), '->', JSON.stringify(shown));
+    if (shown && shown.ok) spoken += ' I have put the cursor on that line, so your screen reader can read it from the page.';
+    speak(spoken, { lang: result.lang, rate: settings.rate, voiceName: settings.voiceName });
+    return { answer: spoken, note: fallbackNote || undefined };
   }
 
   const target = extraction.elements.find((e) => e.index === result.action.index);
