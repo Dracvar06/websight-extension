@@ -74,7 +74,7 @@ const PLAN_SCHEMA = {
 // Things on a page that only change what it shows: never links that leave
 // it, never anything that sounds like it acts (DANGEROUS), and not the
 // furniture every page has (search, menus, carousels, video players).
-const NOT_WORTH_TRYING = /search|menu|navigation|close|dismiss|share|print|play|pause|mute|video|slide|previous|next|carousel|cookie|accept|reject|zoom|full.?screen|fit to page|log ?in|sign ?in|skip|chat|feedback|language|keyboard|shortcut|scroll (up|down|left|right)|row selection|screen reader tips/i;
+const NOT_WORTH_TRYING = /captcha|robot|human|challenge|verify|useful|helpful|rate this|rating|thumbs|vote|report|subscribe|follow|\b(?:un)?like\b|search|menu|navigation|close|dismiss|share|print|play|pause|mute|video|slide|previous|next|carousel|cookie|accept|reject|zoom|full.?screen|fit to page|log ?in|sign ?in|skip|chat|feedback|language|keyboard|shortcut|scroll (up|down|left|right)|row selection|screen reader tips/i;
 
 function tryCandidates(question, elements) {
   const wanted = new Set(terms(question));
@@ -153,7 +153,9 @@ function hasChoices(elements) {
 // The page text as lines, for telling what a click made appear.
 const pageLines = (text) => (text.split('PAGE TEXT:')[1] || text).split('\n').map((l) => l.trim()).filter((l) => l.length > 3);
 
-const REMEMBER = /^(?:please\s+)?(?:remember|recorda|recuerda)(?:\s+(?:that|que))?\s+(.+?)[.!]*$/i;
+const REMEMBER = /^(?:please\s+)?(?:remember|keep in mind|bear in mind|note|don'?t forget|recorda'?t?|recuerda|ten en cuenta|tingues en compte|apunta)(?:\s+(?:that|que))?\s+(.+?)[.!]*$/i;
+// "I have noted that you study physics", with nothing saved.
+const CLAIMS_NOTED = /\b(noted|I'?ll remember|I will remember|I have remembered|I'?ve remembered|I'?ll keep (?:that|it) in mind|ho recordar[ée]|lo recordar[ée]|ho tindr[ée] en compte|lo tendr[ée] en cuenta)\b/i;
 const SEARCH_COMMAND = /^(?:please\s+)?(?:search|look up|busca|cerca)\s+(?:on\s+)?(?:this site|the site|this page|here|aquí|aqu[ií])?\s*(?:for|per|por)?\s*(.+?)[.?!]*$/i;
 const PROMISES = /\b(I'?ll|I will|let me|I am going to|I'?m going to|I can)\s+(click|press|open|take you|look|go|check|find|search|navigate)\b/i;
 const CONFIRM_WORDS = /^\s*(yes|yeah|yep|sure|confirm|do it|go ahead|sí|si|vale|oui|ja|okay|ok|sim|da)\b/i;
@@ -360,18 +362,27 @@ async function autoDescribe(tabId, windowId, key) {
 }
 
 // Alt+Shift+N: wipe this tab's conversation and reopen the popup fresh.
-chrome.commands.onCommand.addListener(async (command) => {
+// WebSight lives in Chrome's side panel, not a popup: a popup closes the
+// moment anything else is clicked, taking what was being said with it.
+// The hotkey (or the icon) opens the panel, or, when it is already open,
+// starts listening there (or sends, if it is listening).
+chrome.action.onClicked.addListener((tab) => {
+  // Opened first, before any await: Chrome only allows it straight after
+  // the key press.
+  chrome.sidePanel.open({ windowId: tab.windowId }).catch(() => {});
+  chrome.runtime.sendMessage({ type: 'websight-talk' }).catch(() => {});
+});
+
+chrome.commands.onCommand.addListener(async (command, tab) => {
   if (command !== 'new-conversation') return;
+  const opening = tab ? chrome.sidePanel.open({ windowId: tab.windowId }).catch(() => null) : Promise.resolve(null);
   chrome.tts.stop();
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (tab && tab.id) await chrome.storage.session.remove(`tab:${tab.id}`);
-  try {
-    await chrome.action.openPopup();
-  } catch {
-    // Popup could not be opened programmatically (e.g. no focused window).
-    const settings = await getSettings();
-    speak('New conversation. Press the hotkey to talk.', { rate: settings.rate, voiceName: settings.voiceName });
-  }
+  const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (active && active.id) await chrome.storage.session.remove(`tab:${active.id}`);
+  await opening;
+  chrome.runtime.sendMessage({ type: 'websight-new-conversation' }).catch(() => {
+    // The panel was not open yet; it starts empty and listening anyway.
+  });
 });
 chrome.tabs.onRemoved.addListener((tabId) => {
   chrome.storage.session.remove(`tab:${tabId}`);
@@ -698,11 +709,22 @@ async function fetchJson(url, ms = 8000, init = {}) {
 
 // The official website for a name, from Wikidata (see lib/sites.js).
 async function officialSite(name) {
+  const pick = async (hits, byName = false) => {
+    if (!hits.length) return null;
+    const ids = hits.map((x) => x.id).join('|');
+    const data = await fetchJson(`https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${ids}&props=claims|labels|descriptions&languages=${byName ? 'en|ca|es|fr|pt|de|it|eu|gl' : 'en'}&format=json&origin=*`);
+    return data && data.entities ? pickOfficialSite(hits, data.entities, name, byName) : null;
+  };
+  // Names as they start ("UCSB", "Caprabo")...
   const search = await fetchJson(`https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(name)}&language=en&uselang=en&format=json&limit=6&origin=*`);
-  if (!search || !search.search || !search.search.length) return null;
-  const ids = search.search.map((x) => x.id).join('|');
-  const data = await fetchJson(`https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${ids}&props=claims|labels|descriptions&languages=en&format=json&origin=*`);
-  return data && data.entities ? pickOfficialSite(search.search, data.entities, name) : null;
+  const found = await pick((search && search.search) || []);
+  if (found && !found.unsure) return found;
+  // ...then by words in any language and order: "Govern del País Basc" is
+  // the Basque Government.
+  const text = await fetchJson(`https://www.wikidata.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(name)}&srlimit=5&format=json&origin=*`);
+  const hits = ((text && text.query && text.query.search) || []).map((x) => ({ id: x.title }));
+  const byWords = await pick(hits, true);
+  return byWords && (!byWords.unsure || !found) ? byWords : found || byWords;
 }
 
 async function pageTitle(url) {
@@ -724,6 +746,65 @@ async function pageTitle(url) {
 function yours(text) {
   const swap = { "i'm": "you're", 'i am': 'you are', i: 'you', my: 'your', me: 'you', mine: 'yours', 'i’m': 'you’re' };
   return text.replace(/\b(i['’]m|i am|i|my|me|mine)\b/gi, (w) => swap[w.toLowerCase()] || w);
+}
+
+// Added to About me (Settings), which every question carries.
+async function rememberFact(said, settings) {
+  const fact = said.trim().replace(/[.!]+$/, '').replace(/^i('m| am)\b/i, 'I am');
+  const aboutMe = `${settings.aboutMe ? settings.aboutMe + '\n' : ''}${fact[0].toUpperCase()}${fact.slice(1)}.`.slice(-2000);
+  await chrome.storage.local.set({ aboutMe });
+  const msg = `I will remember that ${yours(fact)}. It is in Settings, under About me, if you want to change it.`;
+  speak(msg, { rate: settings.rate, voiceName: settings.voiceName });
+  return { answer: msg };
+}
+
+// The AI understood a request about another website, the wider web, or the
+// person ("hey, get me onto Caprabo", "busca vols a Lisboa"). It only names
+// things; addresses still come from Wikidata, never from the AI.
+const ELSEWHERE = new Set(['site', 'websearch', 'remember']);
+
+// Sounds like going to another website: "get me onto the Caprabo site",
+// "vull anar a la web del Govern basc".
+const GO_WORDS = /\b(take|get|bring|send|go|head|visit|open|navigate|show)\b|ll[eé]va|porta'?m|dur-?me|vull anar|quiero ir|v[eé]s a|ves a|anar a|ir a/i;
+const SITE_WORDS_ANY = /\b(site|website|web ?site|web|home ?page|p[aà]gina)\b/i;
+
+// A small model sometimes answers "going to another website" with words and
+// no action. Asked only that, narrowly, it names the organisation reliably.
+async function whichSite(provider, question, here = '') {
+  if (!GO_WORDS.test(question) || !SITE_WORDS_ANY.test(question)) return null;
+  const r = await provider
+    .ask({
+      history: [],
+      question: `(Note from the app: does this request ask to go to some organisation's website?${here ? ` They are on ${here} now; a page of this same site is not another website, so then action null.` : ''} If yes, return {"type": "site", "value": "<the organisation's usual name, in English if it has one>", "page": "<a page on it they asked for, or empty>"}. If not, action null. Request: "${question}")`,
+      pageText: '',
+      screenshotBase64: '',
+    })
+    .catch(() => null);
+  trace('which site? ->', JSON.stringify(r && r.action));
+  return r && r.action && r.action.type === 'site' ? r.action : null;
+}
+
+async function actElsewhere(tab, action, question, settings, provider, state) {
+  trace('understood as', JSON.stringify(action));
+  if (action.type === 'remember') return rememberFact(action.value, settings);
+  if (action.type === 'websearch' && !/\b(search|google|look\s*up|find|busca|cerca|buscar|cercar|investiga)\b/i.test(question)) {
+    // "técnicu website" is a site, even when a small model calls it a search.
+    action = { type: 'site', value: action.value.replace(/\b(official\s+)?(website|web ?site|site|home ?page|p[aà]gina web|web)\b/gi, '').trim() || action.value, page: '' };
+  }
+  if (action.type === 'websearch') {
+    const words = `Searching the web for "${action.value}".`;
+    speak(words, { rate: settings.rate, voiceName: settings.voiceName });
+    earcon('working');
+    await chrome.search.query({ text: action.value, tabId: tab.id });
+    lastManualActivity = 0;
+    return { answer: words };
+  }
+  // A name the person did not say (a correction of something misheard) is
+  // confirmed with a yes before going anywhere.
+  const plain = (t) => t.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const said = plain(question);
+  const theirWords = (plain(action.value).match(/[a-z0-9]+/g) || []).every((w) => said.includes(w));
+  return goToSite(tab, { kind: 'name', name: action.value, page: action.page, heard: theirWords ? undefined : question.trim() }, settings, provider, state);
 }
 
 function pickSaidOption(question, options, elements) {
@@ -780,11 +861,34 @@ async function goToSite(tab, site, settings, provider, state) {
     // An address they said themselves is used as said.
     return go(site.url, `Going to ${new URL(site.url).host}.`);
   }
-  const official = await officialSite(site.name);
+  let official = await officialSite(site.name);
+  if (!official) {
+    // Wikidata is searched by English name: "Govern del País Basc" is
+    // found as "Basque Government".
+    const english = await provider
+      .ask({
+        history: [],
+        question: `(Note from the app: what is the organisation "${site.name}" usually called in English? Put only that name in "answer", or the same name if it has no English one.)`,
+        pageText: '',
+        screenshotBase64: '',
+      })
+      .then((r) => ((r && r.answer) || '').replace(/^["'“]|["'”.]+$/g, '').trim())
+      .catch(() => '');
+    if (english && english.length < 80 && english.toLowerCase() !== site.name.toLowerCase()) {
+      trace('in English:', site.name, '->', english);
+      official = await officialSite(english);
+      if (official) site = { ...site, name: english };
+    }
+  }
   trace('official site for', site.name, '->', JSON.stringify(official && { url: official.url, label: official.label, unsure: official.unsure }));
   if (official && !official.unsure) {
     const host = official.host;
     const what = (official.description || '').split(/[,;(]/)[0].trim();
+    if (site.page && !site.heard && !KIND_OF_PLACE.test(site.page)) {
+      say(`Looking for ${site.page} on ${host}, the official website of ${official.label}.`);
+      const went = await goToPageOnSite(tab, site.page, settings, state, host);
+      if (went) return went;
+    }
     return go(official.url, `Going to ${host}, the official website of ${official.label}${what ? ` (${what})` : ''}, according to Wikidata.`);
   }
   // "UCSB undergraduate admissions": the organisation, then a page on its
@@ -824,7 +928,10 @@ async function goToSite(tab, site, settings, provider, state) {
   }
   state.pendingAction = { type: 'goto', url: guess.url, name: site.name };
   await setTabState(tab.id, state);
-  const msg = `I could not confirm the official website of ${site.name}. My best guess is ${new URL(guess.url).host}, a page titled "${title}". Say yes to go there, or anything else to cancel.`;
+  const what = official && (official.description || '').split(/[,;(]/)[0].trim();
+  const msg = official
+    ? `I think you mean ${official.label}${what ? ` (${what})` : ''}. Wikidata lists ${new URL(guess.url).host} as its website, a page titled "${title}". Say yes to go there, or anything else to cancel.`
+    : `I could not confirm the official website of ${site.name}. My best guess is ${new URL(guess.url).host}, a page titled "${title}". Say yes to go there, or anything else to cancel.`;
   say(msg);
   return { answer: msg, pendingConfirmation: true };
 }
@@ -863,14 +970,7 @@ async function answerQuestion(question) {
   // "Remember that I'm a physics major": added to About me (Settings), which
   // every question carries, so later guesses fit them.
   const remember = question.trim().match(REMEMBER);
-  if (remember) {
-    const fact = remember[1].trim().replace(/^i('m| am)\b/i, 'I am');
-    const aboutMe = `${settings.aboutMe ? settings.aboutMe + '\n' : ''}${fact[0].toUpperCase()}${fact.slice(1)}.`.slice(-2000);
-    await chrome.storage.local.set({ aboutMe });
-    const msg = `I will remember that ${yours(remember[1].trim().replace(/[.!]+$/, ''))}. It is in Settings, under About me, if you want to change it.`;
-    speak(msg, { rate: settings.rate, voiceName: settings.voiceName });
-    return { answer: msg };
-  }
+  if (remember) return rememberFact(remember[1], settings);
 
   // "Take me to the UChicago website" works anywhere, a new tab included.
   const site = !state.pendingAction && siteRequest(question, onWebPage);
@@ -899,9 +999,25 @@ async function answerQuestion(question) {
     return { answer: words };
   }
   if (!onWebPage && !state.pendingAction) {
-    const msg = `${protectedPage(tab.url)} Say a website to go to, for example "take me to the UChicago website", or "search for" and what you want to find.`;
+    // No page to read: whatever they said is about going somewhere,
+    // searching, or themselves. The AI works out which.
+    const help = `${protectedPage(tab.url)} Say a website to go to, for example "take me to the UChicago website", or "search for" and what you want to find.`;
+    const understood = await provider
+      .ask({
+        history: [],
+        question: `${question}\n\n(Note from the app: ${protectedPage(tab.url)} There is no web page to read or click. Work out what they want: another website (action "site"), a web search ("websearch"), or something to remember ("remember"). If it is none of these, answer briefly and say they can name a website or say "search for" something.)`,
+        pageText: 'NO PAGE: Chrome\'s new tab or one of its own pages.',
+        screenshotBase64: '',
+      })
+      .catch(() => null);
+    if (understood && understood.action && ELSEWHERE.has(understood.action.type)) {
+      return actElsewhere(tab, understood.action, question, settings, provider, state);
+    }
+    const site = await whichSite(provider, question);
+    if (site) return actElsewhere(tab, site, question, settings, provider, state);
+    const msg = understood && understood.answer && !understood.action ? understood.answer : help;
     speak(msg, { rate: settings.rate, voiceName: settings.voiceName });
-    return { answer: msg, error: true };
+    return { answer: msg };
   }
 
   // Pending dangerous action: "yes" executes it, anything else cancels.
@@ -1029,6 +1145,10 @@ async function answerQuestion(question) {
   // A model that says it clicked or went somewhere without asking for the
   // action has done nothing; a person who cannot see the screen would
   // believe it. Seen in testing: "I've taken you back to the previous page".
+  if (result && !result.action && CLAIMS_NOTED.test(result.answer)) {
+    // Said it would remember: then it really does.
+    return rememberFact(question.replace(/^(?:please\s+|hey\s+|ok\s+|so\s+)*(?:(?:can|could) you\s+)?/i, ''), settings);
+  }
   if (result && !result.action && CLAIMS_ACTION.test(result.answer)) {
     console.warn('WebSight: dropped an answer claiming an action that was not taken:', result.answer);
     result = { answer: 'I have not done anything on the page. Could you say again what you would like me to do?', lang: result.lang, action: null };
@@ -1038,6 +1158,14 @@ async function answerQuestion(question) {
   // at most two pages deep, saying where at each step. Links only, so
   // nothing is bought, sent or submitted on the way.
   trace('asked', JSON.stringify(question), '->', JSON.stringify(result && { answer: result.answer, action: result.action }));
+  if (result && result.action && ELSEWHERE.has(result.action.type)) {
+    return actElsewhere(tab, result.action, question, settings, provider, state);
+  }
+  // "Can you get me onto the Caprabo site?" is a request, question mark or not.
+  if (result && (!result.action || result.action.type === 'explore' || result.action.type === 'scroll')) {
+    const site = await whichSite(provider, question, /^https?:/.test(tab.url || "") ? new URL(tab.url).host : "");
+    if (site) return actElsewhere(tab, site, question, settings, provider, state);
+  }
   // A question is answered, never just clicked away from: "When does
   // winter quarter start?" once got a click on an unrelated event and
   // "Done". Treated as looking on that page, so an answer still comes.
@@ -1412,6 +1540,11 @@ async function answerQuestion(question) {
   trace('risk:', target && target.name, '->', JSON.stringify(risk));
   if (risk.level === 'refuse') {
     await setTabState(tab.id, state);
+    if (risk.focusInstead && target) {
+      // Theirs to press: the cursor goes there, nothing is pressed.
+      const box = extraction.elements.find((e) => CAPTCHA_NAME.test(e.name || '')) || target;
+      await actOn(tab.id, { type: 'focus', index: box.index }, extraction.elements).catch(() => null);
+    }
     speak(risk.why, { rate: settings.rate, voiceName: settings.voiceName });
     return { answer: risk.why };
   }
@@ -1435,7 +1568,18 @@ async function answerQuestion(question) {
 const UNCLEAR = /^(ok|okay|continue|next|confirm|done|save|apply|yes|go|proceed|finish|complete|update|accept|agree|submit|send|place|enviar|continuar|aceptar|guardar|confirmar|seg[uü]ent|desa|d'acord)\b/i;
 const ACTS_BY_ADDRESS = /log ?out|sign ?out|unsubscribe|delete|remove|cancel|deactivate/i;
 
+// "I'm not a robot", picture puzzles, Cloudflare checks. WebSight never
+// presses or answers these: getting past them for the person is what they
+// exist to stop. It says what it is and puts the screen reader on it, so
+// the person does it themselves, with the audio version if there is one.
+const CAPTCHA_NAME = /captcha|not a robot|no soy un robot|no s[oó]c un robot|je ne suis pas un robot|verify (?:that )?you(?:'re| are) (?:a )?human|i am human|are you a robot|audio challenge|desaf[ií]o de audio|repte d'àudio/i;
+const CAPTCHA_PAGE = /recaptcha|hcaptcha|google\.[a-z.]+\/sorry\/|challenges\.cloudflare|unusual traffic|tr[aá]fico inusual|tr[àa]nsit inusual|cf-turnstile/i;
+const CAPTCHA_HELP = 'This is a check that you are a person, called a CAPTCHA. I do not press or answer those for you; you have to do it yourself. I have put your screen reader on it: press Space to tick it. If a picture puzzle appears, look for the audio challenge button, which plays something to type instead.';
+
 async function assessRisk(action, target, provider, pageText) {
+  if (target && (CAPTCHA_NAME.test(target.name || '') || (CAPTCHA_PAGE.test(pageText.slice(0, 3000)) && action.type !== 'scroll' && action.type !== 'back'))) {
+    return { level: 'refuse', why: CAPTCHA_HELP, focusInstead: true };
+  }
   if (!target || ['scroll', 'back', 'reveal', 'explore'].includes(action.type)) return { level: 'safe' };
   if (action.type === 'search') {
     if (target.sensitive) return { level: 'refuse', why: 'I do not type passwords or card numbers. Please type that yourself.' };

@@ -35,8 +35,11 @@ version:
 
 ## Using it
 
-- Press **Alt+Shift+S** (Option+Shift+S on Mac) on any page. Any ongoing
-  speech stops, you hear a beep, and it listens. If the hotkey does nothing,
+- Press **Alt+Shift+S** (Option+Shift+S on Mac) on any page. WebSight opens
+  in Chrome's side panel, on the right, and stays open while you use the
+  page: clicking elsewhere no longer closes it. Any ongoing speech stops, you
+  hear a beep, and it listens. Press the hotkey again (from the page or the
+  panel) to send, or to start a new question. If the hotkey does nothing,
   assign it at `chrome://extensions/shortcuts` - Chrome silently leaves it
   unassigned when another extension already claimed the combo.
 - Speak freely: pauses and breaths do NOT cut you off. Send with **Enter** or
@@ -55,19 +58,17 @@ version:
     (Vowen shuts its server down in resource efficient mode, for example);
     when the configured server does not answer, WebSight automatically uses
     the local voice server instead.
-- With the Browser engine, unsent words are restored if the window closes
-  mid-dictation. With Whisper, prefer Enter to send: audio is recorded in the
-  window and is lost if the window closes before you send.
+- Unsent typed words are kept if the panel is closed. Audio being recorded
+  is lost if you close the panel yourself before sending.
 - Ask anything: "what is this page?", "is there a cheaper option?", "where do
   I unsubscribe?", "click the login button", "scroll down", "open the
   PERSONAL folder".
 - Press the hotkey again at any time to interrupt the answer and ask something new.
 - Follow-up questions keep context: the conversation for the current tab is
-  remembered as you move between pages in that tab, and redisplayed whenever the window
-  reopens. Inside the window, press the **Talk** button (or Alt+Shift+S) to
-  ask again by voice without closing it, or just type.
+  remembered as you move between pages in that tab, and the panel shows the
+  conversation of whichever tab is in front.
 - Press **Alt+Shift+N** to start a NEW conversation on the current page:
-  it wipes that tab's history and opens the window fresh and listening.
+  it wipes that tab's history and opens the panel fresh.
 - The AI reads the whole page's text, below the fold included, plus a
   screenshot of what is on screen now. The page is never scrolled to be
   seen. A very long page is cut to fit: its beginning, then the parts
@@ -189,7 +190,7 @@ the system voices automatically, as does everything if the server is down.
 
 ## How it works
 
-Hotkey opens the popup, which records your question (Whisper on the local
+Hotkey opens the side panel, which records your question (Whisper on the local
 voice server, or the browser's speech engine). The background worker takes a
 screenshot of the tab plus a structured text summary (headings, landmarks,
 an indexed list of links, buttons and fields with where each link goes,
@@ -211,7 +212,7 @@ the line, and speaks the result.
 - `lib/check-numbers.js` - numbers in an answer that are not on the page
 - `offscreen.js` - plays the neural voice and the sounds; reads scouted pages
 - `dev/` - end-to-end tests of the real extension (see Testing)
-- `popup.html/js` - voice UI and typed fallback
+- `popup.html/js` - the side panel: voice UI and typed fallback
 - `options.html/js` - API key, voice speed, language, microphone
 - `test/drive-mock.html` - Drive-like test page (grid items that select on
   click and open on double-click/Enter) for testing extraction and actions

@@ -1,0 +1,7 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Checking your browser</title></head>
+<body><main><h1>One more step</h1><p>Please confirm you are not a robot to continue to the booking page.</p>
+<label><input type="checkbox" id="c"> I'm not a robot</label>
+<p><button id="audio" type="button">Get an audio challenge</button></p>
+<p><button id="go" type="button" onclick="this.textContent='Continue (pressed)'">Continue</button></p>
+<script>document.getElementById('c').addEventListener('change', () => (document.title = 'TICKED BY SOMEONE'));</script>
+</main></body></html>

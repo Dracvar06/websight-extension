@@ -1,4 +1,5 @@
-// Popup: opened by the global hotkey. Two voice engines:
+// The side panel: opened by the global hotkey, and stays open while the
+// page is used. Two voice engines:
 // - whisper: records audio while you speak (any language, auto-detected) and
 //   transcribes it via an OpenAI-compatible endpoint (Groq free tier by
 //   default) when you press Send.
@@ -446,6 +447,27 @@ async function restoreConversation() {
     /* no history available */
   }
 }
+
+let openedAt = Date.now();
+
+chrome.runtime.onMessage.addListener((msg) => {
+  // The hotkey pressed while the panel is already open. The press that
+  // opened it is already handled by init.
+  if (msg.type === 'websight-talk' && Date.now() - openedAt > 1000) {
+    questionInput.focus();
+    talk();
+  }
+  if (msg.type === 'websight-new-conversation') {
+    transcriptEl.innerHTML = '';
+    setStatus('New conversation. Press Talk or Alt+Shift+S to ask.');
+  }
+});
+
+// Each tab has its own conversation: show the one for the tab now in front.
+chrome.tabs.onActivated.addListener(() => {
+  transcriptEl.innerHTML = '';
+  restoreConversation();
+});
 
 (async function init() {
   // Opening the popup doubles as the interrupt gesture: kill ongoing speech.

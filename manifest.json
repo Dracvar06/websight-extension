@@ -3,7 +3,7 @@
   "name": "WebSight - AI sighted friend",
   "description": "Talk to an AI that sees the page and describes it, like a sighted friend sitting next to you.",
   "version": "0.1.0",
-  "permissions": ["activeTab", "scripting", "storage", "tabs", "tts", "declarativeNetRequest", "offscreen", "search"],
+  "permissions": ["activeTab", "scripting", "storage", "tabs", "tts", "declarativeNetRequest", "offscreen", "search", "sidePanel"],
   "host_permissions": ["<all_urls>"],
   "declarative_net_request": {
     "rule_resources": [
@@ -23,8 +23,10 @@
     }
   ],
   "action": {
-    "default_popup": "popup.html",
     "default_title": "Ask WebSight"
+  },
+  "side_panel": {
+    "default_path": "popup.html"
   },
   "commands": {
     "_execute_action": {
