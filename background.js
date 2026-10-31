@@ -3,7 +3,7 @@
 // chrome.tts, and executes confirmed actions through the content script.
 import { getProvider } from './lib/provider.js';
 import { unverifiedNumbers, numbersNote } from './lib/check-numbers.js';
-import { pickLinks, bestPassages } from './lib/scout.js';
+import { pickLinks, bestPassages, terms } from './lib/scout.js';
 
 const DEFAULT_SETTINGS = {
   provider: 'gemini',
@@ -24,7 +24,7 @@ const DEFAULT_SETTINGS = {
 // Element texts that require a spoken confirmation before acting.
 const DANGEROUS = /(buy|purchase|order|pay|checkout|confirm|delete|remove|submit|send|subscribe|transfer|comprar|pagar|pedido|eliminar|borrar|enviar|kaufen|bezahlen|bestellen|löschen|senden|acheter|payer|supprimer|envoyer|acquista|paga|elimina|invia)/i;
 const CLAIMS_ACTION = /\b(I'?ve|I have|I just|I)\s+(clicked|pressed|opened|taken you|gone|went|scrolled|typed|filled|submitted|navigated|moved you|brought you)\b|^(done|clicked|opened)\b/i;
-const NOT_HERE = /\b(don'?t|do not|can'?t|cannot|could ?n[o']t) (see|find)\b|\b(does ?n[o']t|do not|doesn'?t) (have|list|show|mention|include|contain|say|state|give|provide|specify)\b|\bno (information|details|mention)\b|\bnot (sure|listed|shown|mentioned|on this page)\b|\bisn'?t (listed|shown|here|on)\b/i;
+const NOT_HERE = /\b(don'?t|do not|can'?t|cannot|could ?n[o']t) (see|find)\b|\b(does ?n[o']t|do not|doesn'?t) (have|list|show|display|mention|include|contain|say|state|give|provide|specify)\b|\bno (information|details|mention)\b|\bnot (sure|listed|shown|displayed|visible|available|mentioned|on this page)\b|\bisn'?t (listed|shown|here|on)\b/i;
 const IS_QUESTION = /\?$|^(what|when|where|who|whom|which|why|how|is|are|was|were|do|does|did|can|could|should|will|would|has|have|qu[eé]|quan|quin|quina|on|com|qui|cu[aá]ndo|d[oó]nde|qui[eé]n|c[oó]mo|cu[aá]l)\b/i;
 // Each decision handleAsk makes, for the end-to-end test (dev/e2e.mjs
 // turns it on). Off for everyone else.
@@ -58,6 +58,81 @@ const PLAN_SCHEMA = {
   },
   required: ['needs', 'steps', 'answer'],
 };
+
+// Things on a page that only change what it shows: never links that leave
+// it, never anything that sounds like it acts (DANGEROUS), and not the
+// furniture every page has (search, menus, carousels, video players).
+const NOT_WORTH_TRYING = /search|menu|navigation|close|dismiss|share|print|play|pause|mute|video|slide|previous|next|carousel|cookie|accept|reject|zoom|full.?screen|fit to page|log ?in|sign ?in|skip|chat|feedback|language|keyboard|shortcut|scroll (up|down|left|right)|row selection|screen reader tips/i;
+
+function tryCandidates(question, elements) {
+  const wanted = new Set(terms(question));
+  const out = [];
+  for (const e of elements) {
+    if (e.href || DANGEROUS.test(e.name) || NOT_WORTH_TRYING.test(e.name) || e.hidden) continue;
+    if (e.role === 'dropdown') {
+      const now = (e.state.match(/now: ([^;]*)/) || [])[1] || '';
+      const options = ((e.state.match(/options: (.*)$/) || [])[1] || '').split(', ').filter((o) => o && o !== now && o !== '...');
+      for (const o of options.slice(0, 4)) out.push({ e, value: o });
+      continue;
+    }
+    const pressable = ['button', 'item', 'tab', 'summary', 'menuitem'].includes(e.role) || /^tab, not|collapsed/.test(e.state || '');
+    if (pressable && e.state !== 'tab, selected' && e.state !== 'expanded') out.push({ e, value: '' });
+  }
+  // Most promising first: words from the question, then tabs and collapsed
+  // sections, then everything else in page order.
+  const score = (c) =>
+    terms(`${c.e.name} ${c.value}`).filter((t) => wanted.has(t)).length * 10 + (/^tab|collapsed/.test(c.e.state || '') ? 2 : 0);
+  return out.map((c, i) => ({ ...c, s: score(c) - i / 1000 })).sort((a, b) => b.s - a.s).slice(0, 6);
+}
+
+async function tryThings(tab, question, extraction, settings, provider, state, alreadyOpened = []) {
+  // Not again what the plan already pressed.
+  const done = alreadyOpened.join(' | ');
+  const candidates = tryCandidates(question, extraction.elements).filter((c) => !done.includes(`"${c.e.name}"`));
+  const opened = [];
+  if (!candidates.length) return { opened, extraction };
+  trace('trying:', JSON.stringify(candidates.map((c) => [c.e.name, c.value])));
+  speak('That is not shown yet. Let me try a few things on this page.', { rate: settings.rate, voiceName: settings.voiceName });
+  const wanted = new Set(terms(question));
+  const started = Date.now();
+  let current = extraction;
+  for (const c of candidates) {
+    if (Date.now() - started > 30000) break;
+    const label = c.value ? `${c.value} in "${c.e.name}"` : `"${c.e.name}"`;
+    earcon('working');
+    speak(`Trying ${label}.`, { rate: settings.rate, voiceName: settings.voiceName, enqueue: true });
+    const before = new Set(pageLines(current.pageText));
+    const outcome = await actOn(tab.id, { type: 'reveal', index: c.e.index, value: c.value }, current.elements).catch(() => null);
+    if (!outcome || !outcome.ok) continue;
+    opened.push(c.value ? `chose ${c.value} in "${c.e.name}"` : `opened "${c.e.name}"`);
+    await sleep(1500);
+    const after = await extractAll(tab.id).catch(() => null);
+    if (!after) continue;
+    current = after;
+    const appeared = pageLines(after.pageText).filter((l) => !before.has(l));
+    const relevant = appeared.some((l) => terms(l).some((t) => wanted.has(t)) || /\d{1,2}[/.-]\d{1,2}|\b(19|20)\d\d\b|(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.? \d/i.test(l));
+    trace('tried', label, '->', appeared.length, 'new lines', relevant ? '(relevant)' : '');
+    if (!relevant) continue;
+    const answer = await provider
+      .ask({
+        history: state.history,
+        question: `${question}\n\n(Note from the app: trying things on the page, you ${opened[opened.length - 1]}. This text appeared: \"${appeared.join(' / ').slice(0, 1500)}\". The page has chosen now: ${chosenNow(after.elements)}. If this answers the question, answer directly and plainly. If not, say you do not see it. Do not guess.)`,
+        pageText: after.pageText,
+        screenshotBase64: '',
+      })
+      .catch(() => null);
+    trace('after trying ->', JSON.stringify(answer && answer.answer));
+    if (answer && !answer.action && !NOT_HERE.test(answer.answer)) return { result: answer, extraction: after, opened };
+  }
+  // Nothing worked: put the page back as it was.
+  if (opened.length) {
+    await chrome.tabs.reload(tab.id).catch(() => null);
+    await waitForLoad(tab.id);
+    await sleep(800);
+    current = await extractAll(tab.id).catch(() => current);
+  }
+  return { opened, extraction: current };
+}
 
 function hasChoices(elements) {
   return (elements || []).some((e) => e.role === 'dropdown' || /^tab|collapsed/.test(e.state || ''));
@@ -441,6 +516,9 @@ async function extractAll(tabId) {
   return { pageText: top.pageText + (sections.length ? '\n\n' + sections.join('\n\n') : ''), elements };
 }
 
+// For the end-to-end test: read a tab the way questions do.
+globalThis.websightDebug = { extractAll: (tabId) => extractAll(tabId) };
+
 // Sends an action to the frame its element lives in.
 function actOn(tabId, action, elements) {
   const el = (elements || []).find((e) => e.index === action.index);
@@ -661,6 +739,10 @@ async function handleAsk(question) {
   // winter quarter start?" once got a click on an unrelated event and
   // "Done". Treated as looking on that page, so an answer still comes.
   const keepAnswering = (r) => {
+    // It already reads the whole page; scrolling never answers a question.
+    if (r && r.action && r.action.type === 'scroll' && IS_QUESTION.test(question.trim())) {
+      return { ...r, action: null, answer: NOT_HERE.test(r.answer) ? r.answer : 'I do not see that on this page yet.' };
+    }
     if (r && r.action && r.action.type === 'click' && IS_QUESTION.test(question.trim())) {
       // A tab or a collapsed section shows more here; a link goes elsewhere.
       const el = extraction.elements.find((e) => e.index === r.action.index);
@@ -688,6 +770,7 @@ async function handleAsk(question) {
   }
   const firstAnswer = result;
   const opened = [];
+  let triedNote = '';
 
   // Behind this page's own controls? Plan every change first, then make
   // them all, then check the page shows what was planned. A small model
@@ -707,7 +790,8 @@ async function handleAsk(question) {
       .catch(() => null);
     const steps = ((plan && plan.steps) || [])
       .map((st) => ({ ...st, control: extraction.elements.find((e) => e.index === st.index) }))
-      .filter((st) => st.control && !st.control.href && !DANGEROUS.test(st.control.name))
+      .map((st) => (st.control && st.control.role !== 'dropdown' ? { ...st, value: '' } : st))
+      .filter((st) => st.control && !st.control.href && !DANGEROUS.test(st.control.name) && !NOT_WORTH_TRYING.test(st.control.name))
       .slice(0, 4);
     trace('plan:', JSON.stringify(plan && plan.needs), JSON.stringify(steps.map((st) => [st.control.name, st.value])));
     if (steps.length) {
@@ -752,6 +836,24 @@ async function handleAsk(question) {
         result = { answer: 'I changed the page, but I could not read it afterwards.', lang: result.lang, action: null, noShow: true };
       }
       trace('after the plan ->', JSON.stringify({ answer: result.answer, action: result.action }));
+    }
+  }
+
+  // Still not found, and the page has things to press: try them like a
+  // curious person would (tabs, tiles, "show more", dropdown options), one
+  // at a time, watching what text appears. The model is only asked when
+  // something relevant shows up, so trying is cheap. Nothing that leaves
+  // the page, sends a form or sounds risky; the page is reloaded after if
+  // nothing worked, so it is left as it was.
+  if (result && !result.action && IS_QUESTION.test(question.trim()) && NOT_HERE.test(result.answer)) {
+    const tried = await tryThings(tab, question, extraction, settings, provider, state, opened);
+    if (tried.result) {
+      result = tried.result;
+      extraction = tried.extraction;
+      opened.push(...tried.opened);
+    } else if (tried.opened.length) {
+      triedNote = ` I tried ${quoteList(tried.opened.map((o) => o.replace(/^(opened|chose) /, '')))} on this page, but none of them showed it, so I put the page back as it was.`;
+      extraction = tried.extraction;
     }
   }
 
@@ -965,7 +1067,13 @@ async function handleAsk(question) {
       numbers: (result.answer.match(/\d[\d.,:/]*\d|\d{2,}/g) || []).filter((n) => !missing.includes(n)),
     }).catch(() => null);
     trace('show me where:', JSON.stringify(result.quote), '->', JSON.stringify(shown));
-    if (opened.length) spoken += ` On the page, I ${opened.join(' and ')}.`;
+    // What was pressed or tried, said about the page it happened on.
+    const movedOn = Boolean(takenTo || answeredThere || hops);
+    const doneHere = [
+      opened.length ? `I ${opened.join(' and ')}` : '',
+      triedNote ? triedNote.trim().replace(/^I tried/, 'I tried').replace(/ on this page,/, ',') : '',
+    ].filter(Boolean);
+    if (doneHere.length) spoken += movedOn ? ` Before that, on the first page, ${doneHere.join('. ')}${/[.]$/.test(doneHere[doneHere.length - 1]) ? '' : '.'}` : ` On the page, ${doneHere.join('. ')}${/[.]$/.test(doneHere[doneHere.length - 1]) ? '' : '.'}`;
     if (takenTo) {
       spoken += ` That is on the page "${takenTo}", so I have taken you there${shown && shown.ok ? ' and put the cursor on that line' : ''}. Say "go back" to return.`;
     } else if (shown && shown.ok) {
