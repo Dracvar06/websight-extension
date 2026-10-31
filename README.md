@@ -57,7 +57,7 @@ voice out, and it can click, focus or fill things when you ask.
   PERSONAL folder".
 - Press the hotkey again at any time to interrupt the answer and ask something new.
 - Follow-up questions keep context: the conversation for the current tab is
-  remembered (until you navigate away) and redisplayed whenever the window
+  remembered as you move between pages in that tab, and redisplayed whenever the window
   reopens. Inside the window, press the **Talk** button (or Alt+Shift+S) to
   ask again by voice without closing it, or just type.
 - Press **Alt+Shift+N** to start a NEW conversation on the current page:
@@ -75,7 +75,39 @@ voice out, and it can click, focus or fill things when you ask.
 Change the hotkey at `chrome://extensions/shortcuts` if it clashes with your
 screen reader.
 
-## Neural voices (optional, recommended)
+## Finding things, and checking them yourself
+
+WebSight's job is to help you find the answer, not to ask you to trust it.
+
+- **Show me where.** An answer from the page comes with the exact line it
+  rests on, and the keyboard focus is moved to that line (outlined for a
+  sighted helper), so your own screen reader reads the real text. When
+  the same line appears twice (UChicago lists "Jan 4, 2027" under two
+  plans), the one whose heading matches your question wins, and a short
+  card is read whole so the heading comes with the date.
+- **Scouting.** When a page loads, up to 30 pages on the same site that its
+  menus and links lead to are read quietly in the background as plain text
+  (no cookies sent, nothing clicked). If the answer is not on your page,
+  the best-matching passages are found by keywords, the AI answers from
+  them, and you are taken to that page and put on the line. "Say go back
+  to return." Sites that build their text with JavaScript give scouting
+  nothing; then it falls back to:
+- **Looking via links.** "That is not on this page. Let me look on
+  Students." At most two pages, links only, saying where it goes, and
+  telling you where you ended up if it found nothing.
+- **What actions really did.** The words around a click come from the
+  page, not the AI: a new page (named), a menu that opened (and what is in
+  it), or "I pressed it, but nothing changed". Short sounds mark working,
+  arrived, opened and nothing happened. An AI answer that claims an action
+  it did not take ("I've taken you back") is never spoken.
+- **Numbers.** A number in an answer that is not written on the page is
+  named out loud ("I could not find 39.99 written on the page, so please
+  double-check it"). Single digits are only loosely checked, since some
+  digit is almost always on the page.
+- **No phantom questions.** Whisper turns silence into confident words
+  ("you", "Obrigado."); a recording with no real sound in it is never sent.
+
+## Neural voices (default)
 
 The system voices vary a lot by language. For natural speech in every
 language, run the bundled neural TTS server (Kokoro + Piper via Speaches,
@@ -89,8 +121,8 @@ all local and free):
    file outside this folder; it logs to `tts-server/server.log`). To remove
    it: `launchctl bootout gui/$(id -u)/com.websight.tts-server` and delete
    the plist. To run manually instead: `./run-voice-server.sh`.
-3. In Settings, set Voice engine to "Neural local server" and press
-   Test neural voice.
+3. This is the default voice engine; press Test neural voice in Settings to
+   hear it. Choose "System voices" there to switch back.
 
 English/Spanish/French/Italian/Portuguese/Hindi/Japanese/Chinese use Kokoro,
 Catalan uses Piper (veu "ona"). Languages without a neural voice fall back to
@@ -98,12 +130,16 @@ the system voices automatically, as does everything if the server is down.
 
 ## How it works
 
-Hotkey opens the popup, which records your question (Web Speech API). The
-background worker takes a screenshot of the tab plus a structured text summary
-(headings, landmarks, an indexed list of links/buttons/fields) and sends both
-to Gemini Flash with the conversation history for that tab. The answer is
-spoken with `chrome.tts`. If the model proposes an action, the content script
-executes it against the indexed element map.
+Hotkey opens the popup, which records your question (Whisper on the local
+voice server, or the browser's speech engine). The background worker takes a
+screenshot of the tab plus a structured text summary (headings, landmarks,
+an indexed list of links, buttons and fields with where each link goes,
+including links inside closed menus) and sends both to the chosen model
+(Gemini, DeepSeek, or Gemma 4 E4B on Ollama) with the conversation history
+for that tab. The answer, the line it rests on and any action come back as
+JSON. The worker checks the answer against the page (numbers, claimed
+actions), scouts or looks via links when it is not there, puts the focus on
+the line, and speaks the result.
 
 ## Files
 
@@ -111,12 +147,57 @@ executes it against the indexed element map.
 - `background.js` - orchestrator: capture, AI call, speech, actions, confirmation gate
 - `content.js` + `lib/page-extract.js` - page summary, element map, action execution
 - `lib/provider.js` - provider abstraction and the shared system prompt
-- `lib/gemini.js` + `lib/deepseek.js` - REST clients (Gemini has vision, DeepSeek is text only)
+- `lib/gemini.js` + `lib/deepseek.js` + `lib/ollama.js` - REST clients (Gemini and Ollama have vision, DeepSeek is text only)
+- `lib/scout.js` - which nearby pages to read and which passages match a question (the reading itself is in `offscreen.js`)
+- `lib/check-numbers.js` - numbers in an answer that are not on the page
+- `offscreen.js` - plays the neural voice and the sounds; reads scouted pages
+- `dev/` - end-to-end tests of the real extension (see Testing)
 - `popup.html/js` - voice UI and typed fallback
 - `options.html/js` - API key, voice speed, language, microphone
 - `test/drive-mock.html` - Drive-like test page (grid items that select on
   click and open on double-click/Enter) for testing extraction and actions
   without the extension: serve the folder and open it in a browser
+
+## Testing
+
+`dev/e2e.mjs` loads the real extension in Chrome for Testing, opens pages,
+asks questions by typing (and by a fake microphone), and records what it
+says, how long it takes and where the keyboard focus lands. Speech is muted;
+the words are logged. Scenarios in `dev/scenarios/` ask follow-up questions
+on real sites (UCSB, UChicago).
+
+    cd dev && npm install
+    curl -LO https://storage.googleapis.com/chrome-for-testing-public/156.0.8078.80/mac-arm64/chrome-mac-arm64.zip
+    mkdir -p browsers/chrome/mac_arm-156.0.8078.80 && ditto -x -k chrome-mac-arm64.zip browsers/chrome/mac_arm-156.0.8078.80
+    node e2e.mjs                                    # the test shop page
+    WS_SCENARIO=scenarios/explore.json node e2e.mjs  # one real-site scenario
+    ./compare.sh gemma4:e4b gemma4:26b-a4b-24k      # everything, per model
+
+(`@puppeteer/browsers install` lost the Frameworks folder when unzipping on
+macOS; `ditto` keeps it.) Known gap: the fake microphone records silence in
+Chrome for Testing on macOS, so the voice step only checks that silence is
+refused; Whisper itself is checked directly against `test/audio`.
+
+### Results, October 31 2026 (Gemma 4 E4B, local)
+
+Every answer was checked by hand against the page it came from.
+
+| Scenario | Questions | Useful answer | Invented a fact | Typical time |
+|---|---|---|---|---|
+| Test shop page (price, delivery, reviews, click, buy) | 5 | 5 | 0 | 4–8 s |
+| UCSB: open a menu, go to Admissions, go back | 3 | 3 | 0 | 5–7 s |
+| UChicago admissions (apply, deadlines, tuition) | 5 | 5 | 0 | 5–23 s |
+| UChicago deadlines, three plans with shared dates | 3 | 3, focus on the right plan | 0 | 5 s |
+| UCSB facts one link away (Nobel laureates, enrolment) | 2 | 2, taken to the line | 0 | 7–10 s |
+| UCSB academic calendar, finals, chancellor | 8 | 2 | 0 | 5–23 s |
+| Arrival descriptions | 6 | 6 | 0 | 7–13 s |
+
+The weak spot is the UCSB academic calendar: the model keeps choosing the
+events calendar, and the Registrar's dates only appear after a year is
+picked from a dropdown, so they are not in any page text. It says it could
+not find them, which is the right failure. Gemma 4 26B chose better links
+but took 15–140 s per answer on a 24 GB Mac and missed deadlines that were
+on the page, so E4B is the default.
 
 ## Roadmap
 
