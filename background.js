@@ -4,6 +4,7 @@
 import { getProvider } from './lib/provider.js';
 import { unverifiedNumbers, numbersNote } from './lib/check-numbers.js';
 import { pickLinks, bestPassages, terms } from './lib/scout.js';
+import { siteRequest, pickOfficialSite } from './lib/sites.js';
 
 const DEFAULT_SETTINGS = {
   provider: 'gemini',
@@ -598,6 +599,93 @@ async function answerFromScouting(provider, question, extraction, history) {
   return { result, page: best[source - 1].page };
 }
 
+// ---- going to a website by name (lib/sites.js) ----
+
+async function fetchJson(url, ms = 8000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  try {
+    const res = await fetch(url, { signal: controller.signal, credentials: 'omit' });
+    return res.ok ? await res.json() : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// The official website for a name, from Wikidata (see lib/sites.js).
+async function officialSite(name) {
+  const search = await fetchJson(`https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(name)}&language=en&uselang=en&format=json&limit=6&origin=*`);
+  if (!search || !search.search || !search.search.length) return null;
+  const ids = search.search.map((x) => x.id).join('|');
+  const data = await fetchJson(`https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${ids}&props=claims|labels|descriptions&languages=en&format=json&origin=*`);
+  return data && data.entities ? pickOfficialSite(search.search, data.entities, name) : null;
+}
+
+async function pageTitle(url) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 6000);
+  try {
+    const res = await fetch(url, { credentials: 'omit', signal: controller.signal });
+    const html = res.ok ? (await res.text()).slice(0, 200000) : '';
+    const m = html.match(/<title[^>]*>([^<]*)<\/title>/i);
+    return m ? m[1].replace(/\s+/g, ' ').trim() : '';
+  } catch {
+    return '';
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function goToSite(tab, site, settings, provider, state) {
+  const say = (text) => speak(text, { rate: settings.rate, voiceName: settings.voiceName });
+  const go = async (url, words) => {
+    say(words);
+    earcon('working');
+    await chrome.tabs.update(tab.id, { url });
+    await waitForNavigation(tab.id, tab.url, 5000);
+    await waitForLoad(tab.id);
+    earcon('arrived');
+    lastManualActivity = 0; // let the page be described when it loads
+    return { answer: words };
+  };
+  if (site.kind === 'address') {
+    // An address they said themselves is used as said.
+    return go(site.url, `Going to ${new URL(site.url).host}.`);
+  }
+  const official = await officialSite(site.name);
+  trace('official site for', site.name, '->', JSON.stringify(official && { url: official.url, label: official.label, unsure: official.unsure }));
+  if (official && !official.unsure) {
+    const host = official.host;
+    const what = (official.description || '').split(/[,;(]/)[0].trim();
+    return go(official.url, `Going to ${host}, the official website of ${official.label}${what ? ` (${what})` : ''}, according to Wikidata.`);
+  }
+  // Not confirmed: the model's guess, checked by loading it, and only
+  // with a yes. Lookalike sites are exactly what this must not land on.
+  const guess = official ? { url: official.url } : await provider
+    .ask({
+      history: [],
+      question: `(Note from the app: what is the official website address of "${site.name}"? Put it in "answer" as a full https address, nothing else. If you are not sure, answer "unknown".)`,
+      pageText: '',
+      screenshotBase64: '',
+    })
+    .then((r) => ({ url: ((r && r.answer) || '').match(/https?:\/\/[^\s"']+/)?.[0] || '' }))
+    .catch(() => ({ url: '' }));
+  const title = guess.url ? await pageTitle(guess.url) : '';
+  trace('unconfirmed guess', guess.url, JSON.stringify(title));
+  if (!guess.url || !title) {
+    const msg = `I could not find the official website of ${site.name}. If you know its address, say "go to" and the address.`;
+    say(msg);
+    return { answer: msg };
+  }
+  state.pendingAction = { type: 'goto', url: guess.url, name: site.name };
+  await setTabState(tab.id, state);
+  const msg = `I could not confirm the official website of ${site.name}. My best guess is ${new URL(guess.url).host}, a page titled "${title}". Say yes to go there, or anything else to cancel.`;
+  say(msg);
+  return { answer: msg, pendingConfirmation: true };
+}
+
 // ---- main flow ----
 
 async function handleAsk(question) {
@@ -612,13 +700,22 @@ async function handleAsk(question) {
   }
 
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab || !tab.id || !/^https?:/i.test(tab.url || '')) {
-    const msg = 'I can only help on regular web pages, and this tab is not one.';
+  if (!tab || !tab.id) {
+    const msg = 'I could not find the tab you are on.';
     speak(msg, { rate: settings.rate, voiceName: settings.voiceName });
     return { answer: msg, error: true };
   }
-
+  const onWebPage = /^https?:/i.test(tab.url || '');
   const state = await getTabState(tab.id);
+
+  // "Take me to the UChicago website" works anywhere, a new tab included.
+  const site = !state.pendingAction && siteRequest(question, onWebPage);
+  if (site) return goToSite(tab, site, settings, provider, state);
+  if (!onWebPage && !state.pendingAction) {
+    const msg = 'This tab has no web page for me to read. Say "take me to" and a website, for example "take me to the UChicago website".';
+    speak(msg, { rate: settings.rate, voiceName: settings.voiceName });
+    return { answer: msg, error: true };
+  }
 
   // Pending dangerous action: "yes" executes it, anything else cancels.
   if (state.pendingAction) {
@@ -1223,6 +1320,10 @@ const quoteList = (names) =>
 // something that opened (and what is in it), or nothing at all.
 async function performAction(tab, action, settings, state) {
   lastManualActivity = Date.now();
+  if (action.type === 'goto') {
+    // Confirmed after "I could not confirm the official website".
+    return goToSite(tab, { kind: 'address', url: action.url }, settings, null, state);
+  }
   const say = (text, opts = {}) => speak(text, { rate: settings.rate, voiceName: settings.voiceName, ...opts });
   if (action.type === 'scroll') {
     const outcome = await actOn(tab.id, action, state.elements).catch(() => ({ ok: false }));

@@ -125,7 +125,8 @@ async function main() {
     for (const url of pages) {
       const t0 = Date.now();
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
-      const said = await waitForSpeech(t0);
+      // A blank tab has nothing to describe.
+      const said = /^about:/.test(url) ? [] : await waitForSpeech(t0);
       results.steps.push({ step: 'describe on load', url, seconds: (Date.now() - t0) / 1000, said: said.map((s) => s.text) });
       console.log(`describe ${url}: ${((Date.now() - t0) / 1000).toFixed(1)} s\n  ${said.map((s) => s.text).join(' | ') || '(said nothing)'}`);
     }
