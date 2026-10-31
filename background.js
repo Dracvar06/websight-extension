@@ -954,6 +954,7 @@ async function answerQuestion(question) {
         pageText: extraction.pageText,
         screenshotBase64,
       });
+      if (result && result.backup) fallbackNote = `Answered by the local model because ${provider.label} is busy or at its limit.`;
     }
   } catch (err) {
     // Quota exhausted or service overloaded: quietly try the backup
