@@ -211,7 +211,7 @@ async function autoDescribe(tabId, windowId, key) {
       screenshotBase64 = cached && Date.now() - cached.t < 180000 ? cached.base64 : await captureScreenshot(windowId);
     }
     const question =
-      'I just opened this page. In at most two short sentences, tell me what page I am on and what its main content is right now. Name the actual page, article, place or product, and skip generic interface details.';
+      'I just opened this page. Orient me in at most three short sentences: what site and page this is and what it is for; then the two or three most useful things I can read or do here, by their names, and roughly where they are. If anything blocks the page (a cookie banner, popup, sign-in wall or error), say that first. Skip slogans and decoration.';
     const result = await provider.ask({
       history: [],
       question,
