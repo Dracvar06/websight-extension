@@ -95,6 +95,24 @@
     <p class="note" id="ollama-note">Needs the Ollama app running (default address http://localhost:11434). Pull a vision model once in the terminal, for example: ollama pull gemma4:e4b. Press Test connection to list the models you have installed. The extension identifies itself to Ollama as a local request automatically, so no OLLAMA_ORIGINS setup is needed.</p>
   </fieldset>
 
+  <fieldset>
+    <legend>Finding pages on a site</legend>
+    <label for="searchEngine">Search engine</label>
+    <select id="searchEngine" aria-describedby="search-note">
+      <option value="searxng">SearXNG on this computer - free, private, no key</option>
+      <option value="tavily">Tavily - free key, 1,000 searches a month</option>
+      <option value="brave">Brave Search - key, about 1,000 searches a month of free credit</option>
+      <option value="sitemap">None - only the site's own list of pages</option>
+    </select>
+    <label for="searchUrl">SearXNG address</label>
+    <input type="text" id="searchUrl">
+    <label for="searchKey">Search key (Tavily or Brave only)</label>
+    <input type="password" id="searchKey" autocomplete="off">
+    <button type="button" id="test-search">Test search</button>
+    <p class="note" id="search-status" role="status"></p>
+    <p class="note" id="search-note">"Take me to the admissions page" and questions whose answer is elsewhere on a site use a search engine, like a chatbot does, instead of clicking through menus. Only pages on the site you are on, or the official site Wikidata names, are ever opened, so a search can never take you to a lookalike. Searches carry only the site and your words, never your pages or accounts. If the engine is not running or has no key, WebSight uses the site's own list of pages (its sitemap), which is free but patchy.</p>
+  </fieldset>
+
   <button type="button" id="toggle-keys">Show keys</button>
 
   <fieldset>

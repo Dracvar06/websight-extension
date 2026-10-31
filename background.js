@@ -3,8 +3,9 @@
 // chrome.tts, and executes confirmed actions through the content script.
 import { getProvider } from './lib/provider.js';
 import { unverifiedNumbers, numbersNote } from './lib/check-numbers.js';
-import { pickLinks, bestPassages, terms } from './lib/scout.js';
-import { siteRequest, pickOfficialSite } from './lib/sites.js';
+import { pickLinks, bestPassages, terms, siteOf } from './lib/scout.js';
+import { siteRequest, pageRequest, pickOfficialSite } from './lib/sites.js';
+import { searchRequest, parseResults, onSite, sitemapEntries, rankUrls, splitNameAndPage, nameFromUrl } from './lib/web-search.js';
 
 const DEFAULT_SETTINGS = {
   provider: 'gemini',
@@ -21,6 +22,9 @@ const DEFAULT_SETTINGS = {
   ttsEngine: 'neural',
   ttsUrl: 'http://localhost:8100/v1',
   aboutMe: '',
+  searchEngine: 'searxng',
+  searchUrl: 'http://localhost:8888',
+  searchKey: '',
 };
 
 // Element texts that require a spoken confirmation before acting.
@@ -545,10 +549,33 @@ function scoutAround(tabId, extraction) {
   return pages;
 }
 
+// Pages a search engine finds on this site for the question, read the same
+// way as scouted ones (no cookies). Only with a real engine: a sitemap
+// matches addresses, not answers.
+async function searchedPages(question, extraction, settings, alreadyPromise) {
+  if (!settings || (settings.searchEngine || 'searxng') === 'sitemap') return [];
+  let host;
+  try {
+    host = new URL(extraction.pageText.match(/^URL: (.*)$/m)?.[1] || '').host;
+  } catch {
+    return [];
+  }
+  const found = (await findOnSite(host, question, settings).catch(() => [])).filter((r) => r.via !== 'sitemap');
+  const already = new Set((await alreadyPromise).map((p) => p.url));
+  const urls = found.map((r) => sansHash(r.url)).filter((u) => !already.has(u)).slice(0, 4);
+  if (!urls.length) return [];
+  const r = await ensureOffscreen()
+    .then(() => chrome.runtime.sendMessage({ type: 'websight-scout', urls }))
+    .catch(() => null);
+  trace('read', (r && r.pages || []).length, 'search results');
+  return (r && r.pages) || [];
+}
+
 // The answer from the nearby pages, or null. The model sees only the few
 // passages that match the question, numbered, and says which one it used.
-async function answerFromScouting(provider, question, extraction, history) {
-  const pages = await Promise.race([scoutAround(null, extraction), sleep(12000).then(() => [])]);
+async function answerFromScouting(provider, question, extraction, history, settings) {
+  const scoutedPages = Promise.race([scoutAround(null, extraction), sleep(12000).then(() => [])]);
+  const pages = [...(await scoutedPages), ...(await searchedPages(question, extraction, settings, scoutedPages))];
   const best = bestPassages(question, pages, 4);
   trace('best passages:', JSON.stringify(best.map((b) => [b.page.title, b.heading, b.score.toFixed(1)])));
   if (!best.length) return null;
@@ -576,13 +603,85 @@ async function answerFromScouting(provider, question, extraction, history) {
   return { result, page: best[source - 1].page };
 }
 
+// ---- finding a page on a site with a search engine (lib/web-search.js) ----
+
+// Pages on this site that match the words, best first: [{ url, title }].
+// The chosen engine first; if it is not running or has no key, the site's
+// own sitemap. Results on any other site are dropped.
+async function findOnSite(host, phrase, settings) {
+  const site = siteOf(host);
+  const engine = settings.searchEngine || 'searxng';
+  const needsKey = engine === 'tavily' || engine === 'brave';
+  if (engine !== 'sitemap' && !(needsKey && !settings.searchKey)) {
+    const req = searchRequest(engine, { site, phrase, key: settings.searchKey, url: settings.searchUrl });
+    const json = await fetchJson(req.url, 8000, req.init);
+    const found = onSite(parseResults(engine, json), site);
+    trace('web search', engine, JSON.stringify(phrase), 'on', site, '->', found.length, json ? '' : '(no answer)');
+    if (found.length) return found.map((r) => ({ url: r.url, title: r.title, snippet: r.snippet, via: engine }));
+  }
+  const urls = await sitemapUrls(host);
+  const ranked = rankUrls(urls, phrase).slice(0, 5);
+  trace('sitemap', host, urls.length, 'pages ->', JSON.stringify(ranked.slice(0, 3)));
+  return ranked.map((url) => ({ url, title: '', snippet: '', via: 'sitemap' }));
+}
+
+const sitemaps = new Map(); // host -> { t, urls: Promise<string[]> }
+
+function sitemapUrls(host) {
+  const cached = sitemaps.get(host);
+  if (cached && Date.now() - cached.t < 30 * 60000) return cached.urls;
+  const fetchText = (url) =>
+    fetch(url, { credentials: 'omit', signal: AbortSignal.timeout(6000) })
+      .then((r) => (r.ok ? r.text() : ''))
+      .then((t) => t.slice(0, 3000000))
+      .catch(() => '');
+  const urls = (async () => {
+    const robots = await fetchText(`https://${host}/robots.txt`);
+    const listed = [...robots.matchAll(/^sitemap:\s*(\S+)/gim)].map((m) => m[1]);
+    const queue = listed.length ? listed.slice(0, 4) : [`https://${host}/sitemap.xml`];
+    const pages = [];
+    let fetched = 0;
+    while (queue.length && fetched < 12 && pages.length < 50000) {
+      const { pages: p, sitemaps: more } = sitemapEntries(await fetchText(queue.shift()));
+      fetched++;
+      pages.push(...p);
+      queue.push(...more.slice(0, 12 - fetched));
+    }
+    return pages;
+  })();
+  sitemaps.set(host, { t: Date.now(), urls });
+  return urls;
+}
+
+// "Take me to the admissions page" on a site: the search engine's best page
+// on this same site. Null when there is no clear one, so the page's own
+// links are tried as before.
+async function goToPageOnSite(tab, phrase, settings, state, host = new URL(tab.url).host) {
+  const say = (text) => speak(text, { rate: settings.rate, voiceName: settings.voiceName });
+  earcon('working');
+  const found = await findOnSite(host, phrase, settings);
+  const best = found.find((r) => sansHash(r.url) !== sansHash(tab.url || ''));
+  if (!best) return null;
+  const title = best.title || (await pageTitle(best.url)) || nameFromUrl(best.url);
+  const words = `Going to "${title.slice(0, 120)}", on ${siteOf(new URL(best.url).host)}. Say go back if it is not the one.`;
+  say(words);
+  noteDown(state, `Searched ${siteOf(host)} for "${phrase}" (${best.via}) and went to ${best.url}`);
+  await setTabState(tab.id, state);
+  await chrome.tabs.update(tab.id, { url: best.url });
+  await waitForNavigation(tab.id, tab.url, 5000);
+  await waitForLoad(tab.id);
+  earcon('arrived');
+  lastManualActivity = 0; // let the page be described when it loads
+  return { answer: words };
+}
+
 // ---- going to a website by name (lib/sites.js) ----
 
-async function fetchJson(url, ms = 8000) {
+async function fetchJson(url, ms = 8000, init = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ms);
   try {
-    const res = await fetch(url, { signal: controller.signal, credentials: 'omit' });
+    const res = await fetch(url, { ...init, signal: controller.signal, credentials: 'omit' });
     return res.ok ? await res.json() : null;
   } catch {
     return null;
@@ -662,6 +761,19 @@ async function goToSite(tab, site, settings, provider, state) {
     const what = (official.description || '').split(/[,;(]/)[0].trim();
     return go(official.url, `Going to ${host}, the official website of ${official.label}${what ? ` (${what})` : ''}, according to Wikidata.`);
   }
+  // "UCSB undergraduate admissions": the organisation, then a page on its
+  // official site, found by search there and nowhere else.
+  if (!official || official.unsure) {
+    for (const split of splitNameAndPage(site.name).slice(0, 3)) {
+      const org = await officialSite(split.name);
+      trace('official site for', split.name, '->', JSON.stringify(org && { url: org.url, unsure: org.unsure }));
+      if (!org || org.unsure) continue;
+      say(`Looking for ${split.page} on ${org.host}, the official website of ${org.label}.`);
+      const went = await goToPageOnSite(tab, split.page, settings, state, org.host);
+      if (went) return went;
+      return go(org.url, `I could not find ${split.page} there, so I am going to the home page of ${org.host}.`);
+    }
+  }
   // Not confirmed: the model's guess, checked by loading it, and only
   // with a yes. Lookalike sites are exactly what this must not land on.
   const guess = official ? { url: official.url } : await provider
@@ -733,6 +845,18 @@ async function answerQuestion(question) {
   // "Take me to the UChicago website" works anywhere, a new tab included.
   const site = !state.pendingAction && siteRequest(question, onWebPage);
   if (site) return goToSite(tab, site, settings, provider, state);
+  // "Take me to the admissions page": search this site, as a chatbot
+  // would, unless a link on this page plainly is it.
+  const wantsPage = !site && onWebPage && !state.pendingAction && pageRequest(question);
+  if (wantsPage) {
+    const wanted = terms(wantsPage);
+    const extraction = await extractAll(tab.id).catch(() => null);
+    const plainLink = extraction && extraction.elements.some((e) => !e.hidden && e.href && wanted.every((w) => terms(e.name).includes(w)));
+    if (!plainLink) {
+      const went = await goToPageOnSite(tab, wantsPage, settings, state).catch(() => null);
+      if (went) return went;
+    }
+  }
   if (!onWebPage && !state.pendingAction) {
     const msg = 'This tab has no web page for me to read. Say "take me to" and a website, for example "take me to the UChicago website".';
     speak(msg, { rate: settings.rate, voiceName: settings.voiceName });
@@ -999,7 +1123,7 @@ async function answerQuestion(question) {
   // take them there and put them on the line.
   let takenTo = '';
   if (result && !result.action && IS_QUESTION.test(question.trim()) && (NOT_HERE.test(result.answer) || PROMISES.test(result.answer))) {
-    const found = await answerFromScouting(provider, question, extraction, state.history);
+    const found = await answerFromScouting(provider, question, extraction, state.history, settings);
     if (found) {
       earcon('working');
       await chrome.tabs.update(tab.id, { url: found.page.url }).catch(() => null);
@@ -1481,6 +1605,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     pickVoice('en').then((voiceName) => chrome.tts.speak(msg.text, { rate: msg.rate || 1.4, ...(voiceName ? { voiceName } : {}) }));
     sendResponse({ ok: true });
     return false;
+  }
+  if (msg.type === 'websight-test-search') {
+    findOnSite('www.ucsb.edu', 'undergraduate admission', msg.settings)
+      .then((results) => sendResponse({ results }))
+      .catch((err) => sendResponse({ error: String(err) }));
+    return true;
   }
   if (msg.type === 'websight-test-voice') {
     (async () => {

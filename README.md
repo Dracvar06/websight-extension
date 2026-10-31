@@ -125,6 +125,17 @@ WebSight's job is to help you find the answer, not to ask you to trust it.
   the official website of the University of Chicago"). If the match is not
   clear, it checks the site's own title and asks you before going. "Go to
   ucsb.edu" goes straight there.
+- **"Take me to the admissions page"**, or from anywhere "take me to
+  UChicago financial aid", uses a search engine, as a chatbot would,
+  instead of clicking through menus. Only pages on the site you are on, or
+  the official site Wikidata names, are ever opened, so a search cannot
+  take you to a lookalike. It says the page's title as it goes ("Say go
+  back if it is not the one"). If the answer to a question is elsewhere on
+  the site, the top search results are read along with the scouted pages.
+  Engines (Settings, "Finding pages on a site"): SearXNG running on this
+  computer (free, private, no key; the default), Tavily or Brave with your
+  own free key, or none, in which case the site's own sitemap is used
+  (free, works on UCSB and UChicago, patchy elsewhere).
 - **"Search for financial aid"** or "look up parking" types into the
   site's own search box (even one hidden behind a magnifying glass) and
   submits it. It never searches through other sites, and it never solves a
@@ -245,6 +256,8 @@ Recheck after the newer features (same day, E4B, checked by hand):
 | "Take me to the UChicago / UCSB website" from a blank tab | 2 | 2 | 0 | 2–3 s |
 | Remember a fact, then winter start and "and its finals?" | 3 | 3 | 0 | 0.3–7 s |
 | UCSB "take me to the admissions page", then "the undergraduate one" (3 runs) | 6 | 4 | 0 | 6–19 s |
+| From a blank tab: "UCSB undergraduate admissions", "UChicago financial aid" (sitemap, no engine) | 2 | 2 | 0 | 3–5 s |
+| A long page with the answer at the very bottom (parking permit price) | 1 | 1 | 0 | 4 s |
 
 The admissions pair is the weak spot. In one run the first step gave up
 (fixed: an answer offering a choice is now kept), and in one the

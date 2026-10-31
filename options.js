@@ -21,10 +21,13 @@ const DEFAULTS = {
   whisperKey: '',
   whisperModel: 'deepdml/faster-whisper-large-v3-turbo-ct2',
   aboutMe: '',
+  searchEngine: 'searxng',
+  searchUrl: 'http://localhost:8888',
+  searchKey: '',
 };
 
 const el = {};
-for (const id of ['provider', 'geminiKey', 'geminiModel', 'deepseekKey', 'deepseekModel', 'ollamaUrl', 'ollamaModel', 'rate', 'voiceName', 'ttsEngine', 'ttsUrl', 'speechEngine', 'speechLang', 'whisperUrl', 'whisperKey', 'whisperModel', 'aboutMe']) {
+for (const id of ['provider', 'geminiKey', 'geminiModel', 'deepseekKey', 'deepseekModel', 'ollamaUrl', 'ollamaModel', 'rate', 'voiceName', 'ttsEngine', 'ttsUrl', 'speechEngine', 'speechLang', 'whisperUrl', 'whisperKey', 'whisperModel', 'aboutMe', 'searchEngine', 'searchUrl', 'searchKey']) {
   el[id] = document.getElementById(id);
 }
 const rateValueEl = document.getElementById('rate-value');
@@ -88,6 +91,9 @@ function save() {
       whisperKey: el.whisperKey.value.trim(),
       whisperModel: el.whisperModel.value.trim() || DEFAULTS.whisperModel,
       aboutMe: el.aboutMe.value.trim().slice(0, 2000),
+      searchEngine: el.searchEngine.value,
+      searchUrl: el.searchUrl.value.trim() || DEFAULTS.searchUrl,
+      searchKey: el.searchKey.value.trim(),
     });
     saveStatusEl.textContent = 'Saved.';
     setTimeout(() => (saveStatusEl.textContent = ''), 2000);
@@ -103,8 +109,20 @@ el.rate.addEventListener('input', () => {
 
 document.getElementById('toggle-keys').addEventListener('click', (e) => {
   const showing = el.geminiKey.type === 'text';
-  el.geminiKey.type = el.deepseekKey.type = el.whisperKey.type = showing ? 'password' : 'text';
+  el.geminiKey.type = el.deepseekKey.type = el.whisperKey.type = el.searchKey.type = showing ? 'password' : 'text';
   e.target.textContent = showing ? 'Show keys' : 'Hide keys';
+});
+
+document.getElementById('test-search').addEventListener('click', async () => {
+  const status = document.getElementById('search-status');
+  status.textContent = 'Searching ucsb.edu for "undergraduate admission"...';
+  const r = await chrome.runtime.sendMessage({
+    type: 'websight-test-search',
+    settings: { searchEngine: el.searchEngine.value, searchUrl: el.searchUrl.value.trim() || DEFAULTS.searchUrl, searchKey: el.searchKey.value.trim() },
+  }).catch((err) => ({ error: String(err) }));
+  if (!r || r.error) status.textContent = `The test failed: ${(r && r.error) || 'no answer'}.`;
+  else if (!r.results.length) status.textContent = 'Nothing found. The engine may not be running, or the key may be wrong.';
+  else status.textContent = `${r.results[0].via === 'sitemap' && el.searchEngine.value !== 'sitemap' ? 'The search engine did not answer, so the sitemap was used. ' : 'Works. '}Top result: ${r.results[0].title || r.results[0].url}`;
 });
 
 document.getElementById('test-connection').addEventListener('click', async () => {
