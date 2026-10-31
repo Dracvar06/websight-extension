@@ -44,6 +44,25 @@ function chosenNow(elements) {
   return parts.join('; ') || 'nothing to choose';
 }
 
+// The planning question's reply: what is needed, then the steps. Both
+// required, so a small model cannot skip the plan.
+const PLAN_SCHEMA = {
+  type: 'object',
+  properties: {
+    needs: { type: 'string' },
+    steps: {
+      type: 'array',
+      items: { type: 'object', properties: { index: { type: 'integer' }, value: { type: 'string' } }, required: ['index', 'value'] },
+    },
+    answer: { type: 'string' },
+  },
+  required: ['needs', 'steps', 'answer'],
+};
+
+function hasChoices(elements) {
+  return (elements || []).some((e) => e.role === 'dropdown' || /^tab|collapsed/.test(e.state || ''));
+}
+
 // The page text as lines, for telling what a click made appear.
 const pageLines = (text) => (text.split('PAGE TEXT:')[1] || text).split('\n').map((l) => l.trim()).filter((l) => l.length > 3);
 
@@ -668,6 +687,74 @@ async function handleAsk(question) {
     result = again && again.action ? again : { answer: 'I could not find a way to do that on this page.', lang: result.lang, action: null };
   }
   const firstAnswer = result;
+  const opened = [];
+
+  // Behind this page's own controls? Plan every change first, then make
+  // them all, then check the page shows what was planned. A small model
+  // deciding one click at a time forgets the second step ("last year's
+  // winter" is a year AND a term); writing the list first does not.
+  const wantsControls = result && IS_QUESTION.test(question.trim()) && hasChoices(extraction.elements) &&
+    ((!result.action && (NOT_HERE.test(result.answer) || PROMISES.test(result.answer))) || (result.action && result.action.type === 'reveal'));
+  if (wantsControls) {
+    const plan = await provider
+      .ask({
+        history: [],
+        question: `${question}\n\n(Note from the app: plan before touching anything. The page has chosen now: ${chosenNow(extraction.elements)}. In "needs", write what the question needs the page to show (which year, term, plan or option; \"last year\" means the year before the one chosen now; \"next\" the one after). Then in "steps" list every control change needed to get there, in order, as {"index": N, "value": "<the exact option text for a dropdown, otherwise empty>"}: only dropdowns, tabs, and buttons or sections that show more. Use [] if the page already shows it or no control here can. In "answer", a few words.)`,
+        pageText: extraction.pageText,
+        screenshotBase64: '',
+        schema: PLAN_SCHEMA,
+      })
+      .catch(() => null);
+    const steps = ((plan && plan.steps) || [])
+      .map((st) => ({ ...st, control: extraction.elements.find((e) => e.index === st.index) }))
+      .filter((st) => st.control && !st.control.href && !DANGEROUS.test(st.control.name))
+      .slice(0, 4);
+    trace('plan:', JSON.stringify(plan && plan.needs), JSON.stringify(steps.map((st) => [st.control.name, st.value])));
+    if (steps.length) {
+      const say = steps.map((st) => (st.value ? `choose ${st.value} in "${st.control.name}"` : `open "${st.control.name}"`));
+      earcon('working');
+      speak(`Let me ${say.join(', then ')}.`, { rate: settings.rate, voiceName: settings.voiceName });
+      const shownBefore = new Set(pageLines(extraction.pageText));
+      const problems = [];
+      for (const st of steps) {
+        const outcome = await actOn(tab.id, { type: 'reveal', index: st.index, value: st.value }, extraction.elements).catch(() => null);
+        if (outcome && outcome.ok) opened.push(st.value ? `chose ${st.value} in "${st.control.name}"` : `opened "${st.control.name}"`);
+        else problems.push(`could not ${st.value ? `choose ${st.value} in` : 'open'} "${st.control.name}"${outcome && outcome.detail ? ` (${outcome.detail})` : ''}`);
+        await sleep(1200);
+      }
+      try {
+        const before = extraction.elements;
+        extraction = await extractAll(tab.id);
+        screenshotBase64 = provider.vision ? await captureScreenshot(tab.windowId) : '';
+        // Did the page take the choices? A dropdown that still shows the
+        // old year means any answer would be about the wrong year.
+        for (const st of steps) {
+          if (!st.value) continue;
+          const now = extraction.elements.find((e) => e.role === 'dropdown' && e.name === st.control.name && e.frameId === st.control.frameId);
+          const shows = now && (now.state.match(/now: ([^;]*)/) || [])[1];
+          if (shows && !shows.toLowerCase().includes(st.value.toLowerCase())) problems.push(`"${st.control.name}" still shows ${shows}`);
+        }
+        trace('after the plan:', chosenNow(extraction.elements), problems.length ? `problems: ${problems.join('; ')}` : '');
+        const appeared = pageLines(extraction.pageText).filter((l) => !shownBefore.has(l)).join(' / ').slice(0, 1500);
+        result = keepAnswering(
+          await provider
+            .ask({
+              history: state.history,
+              question: `${question}\n\n(Note from the app: you ${opened.join(', then ') || 'changed nothing'}${problems.length ? `; but ${problems.join('; ')}` : ''}. This text appeared: \"${appeared || '(no new text)'}\". The page has chosen now: ${chosenNow(extraction.elements)}. If that matches what they asked and the text answers it, answer directly and plainly. If it does not match, say plainly what the page shows instead. Do not guess.)`,
+              pageText: extraction.pageText,
+              screenshotBase64,
+            })
+            .catch(() => null)
+        ) || { answer: 'I changed the page, but I could not get an answer about it.', lang: result.lang, action: null };
+        if (problems.length && !result.action) result.noShow = result.noShow || false;
+        void before;
+      } catch {
+        result = { answer: 'I changed the page, but I could not read it afterwards.', lang: result.lang, action: null, noShow: true };
+      }
+      trace('after the plan ->', JSON.stringify({ answer: result.answer, action: result.action }));
+    }
+  }
+
   // Not on this page: first the nearby pages read ahead. If one has it,
   // take them there and put them on the line.
   let takenTo = '';
@@ -712,7 +799,6 @@ async function handleAsk(question) {
   // The answer is behind a control on this page (a year in a dropdown, a
   // term in a tab, a collapsed question): open it, read the page again and
   // ask again, up to three times, saying each time what it opens.
-  const opened = [];
   while (result && result.action && result.action.type === 'reveal') {
     const control = extraction.elements.find((e) => e.index === result.action.index);
     if (opened.length >= 3 || !control || DANGEROUS.test(control.name)) {
