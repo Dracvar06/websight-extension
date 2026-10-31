@@ -646,6 +646,18 @@ function yours(text) {
   return text.replace(/\b(i['’]m|i am|i|my|me|mine)\b/gi, (w) => swap[w.toLowerCase()] || w);
 }
 
+function pickSaidOption(question, options, elements) {
+  if (!options || !options.length || IS_QUESTION.test(question.trim())) return null;
+  const words = terms(question).filter((w) => !/^(one|that|link|option|button|page|please|open|take|go|click|press|first|second|third|last)$/.test(w));
+  if (!words.length || words.length > 5) return null;
+  const hits = options.filter((name) => {
+    const t = terms(name);
+    return words.every((w) => t.some((n) => n.startsWith(w) || w.startsWith(n)));
+  });
+  if (hits.length !== 1) return null;
+  return elements.find((e) => e.name === hits[0]) || null;
+}
+
 function noteDown(state, line) {
   state.notes = [...(state.notes || []), `- ${line}`].slice(-12);
 }
@@ -783,8 +795,16 @@ async function handleAsk(question) {
   // page's own search box is used, as a person would.
   const searchFor = question.trim().match(SEARCH_COMMAND);
   const searchBox = searchFor && (extraction.elements.find((e) => e.search && !e.hidden) || extraction.elements.find((e) => e.search));
+  // "The undergraduate one", right after options were read out: the one
+  // whose name has those words, if exactly one does. No model, so no
+  // near-miss elsewhere on the page ("Undergraduate Majors - Catalog").
+  const picked = pickSaidOption(question, state.lastOptions, extraction.elements);
+  state.lastOptions = null;
   try {
-    if (searchBox) {
+    if (picked) {
+      result = { answer: '', lang: '', action: { type: 'click', index: picked.index } };
+      trace('picked from the options just read ->', picked.name);
+    } else if (searchBox) {
       result = { answer: '', lang: '', action: { type: 'search', index: searchBox.index, value: searchFor[1].trim() } };
       trace('search command ->', searchBox.name, JSON.stringify(searchFor[1]));
     } else {
@@ -902,7 +922,12 @@ async function handleAsk(question) {
       })
       .catch(() => null);
     trace('promised without acting; asked again ->', JSON.stringify(again && again.action));
-    result = again && again.action ? again : { answer: 'I could not find a way to do that on this page.', lang: result.lang, action: null };
+    // "I can take you to Undergraduate Admission or Graduate Admissions" is
+    // a real choice, not a broken promise: put it to the person.
+    const offersChoice = /\bor\b/i.test(result.answer) && /\bI can\b/i.test(result.answer);
+    result = again && again.action ? again
+      : offersChoice ? { ...result, answer: `${result.answer.replace(/[.\s]+$/, '')}. Which one?` }
+      : { answer: 'I could not find a way to do that on this page.', lang: result.lang, action: null };
   }
   const firstAnswer = result;
   const opened = [];
@@ -1196,7 +1221,14 @@ async function handleAsk(question) {
     // Then put them on the line it came from, to check with their own
     // screen reader.
     // Nothing to point at when the answer is that it is not there.
-    const shown = result.noShow || NOT_HERE.test(result.answer) ? null : await showAnywhere(tab.id, {
+    // A question back ("Undergraduate or Graduate Admission?") is not a
+    // line to read; remember the choices it names for the reply instead.
+    const asksBack = /\?\s*$/.test(result.answer);
+    if (asksBack) {
+      const said = result.answer.toLowerCase();
+      state.lastOptions = [...new Set(extraction.elements.map((e) => e.name).filter((n) => n && n.length > 3 && said.includes(n.split(' - ')[0].toLowerCase())))];
+    }
+    const shown = asksBack || result.noShow || NOT_HERE.test(result.answer) ? null : await showAnywhere(tab.id, {
       type: 'websight-show',
       quote: result.quote || '',
       about: `${question} ${result.answer}`,
@@ -1418,6 +1450,9 @@ async function performAction(tab, action, settings, state) {
       earcon('opened');
       const shown = added.slice(0, 8);
       spoken = `That opened ${added.length} new option${added.length === 1 ? '' : 's'}: ${quoteList(shown)}${added.length > shown.length ? ', and more' : ''}.`;
+      // So "the undergraduate one" picks from what was just read out.
+      state.lastOptions = shown;
+      await setTabState(tab.id, state);
     } else {
       // No new buttons or links, but the text may have changed ("Step 2 of
       // 3"); say what is new rather than "nothing changed".

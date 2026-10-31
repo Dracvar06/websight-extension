@@ -104,8 +104,51 @@ WebSight's job is to help you find the answer, not to ask you to trust it.
   named out loud ("I could not find 39.99 written on the page, so please
   double-check it"). Single digits are only loosely checked, since some
   digit is almost always on the page.
+- **Trying things, like a sighted person would.** Calendars and dashboards
+  often show nothing until you pick a year or a tab. WebSight first plans
+  which controls to set ("Academic year: 2025-2026", then "Winter"), sets
+  them, and checks they really changed before answering. If there is no
+  clear plan, it tries the likely controls (up to 6 tries in 30 seconds),
+  never links, forms or anything risky, says what it tried, and reloads the
+  page afterwards so it is as you left it.
+- **Inside frames.** Pages embedded in a page (a Power BI calendar, a
+  booking widget, a payment box) are read and pressed like the rest.
 - **No phantom questions.** Whisper turns silence into confident words
   ("you", "Obrigado."); a recording with no real sound in it is never sent.
+
+## Going places, searching, and asking first
+
+- **"Take me to the UChicago website"** works anywhere, a new tab
+  included. The address never comes from the AI's memory, where a small
+  model can invent one or land on a lookalike: it comes from Wikidata, the
+  public database behind Wikipedia, which records each organisation's
+  official website. WebSight says where it is going ("Going to uchicago.edu,
+  the official website of the University of Chicago"). If the match is not
+  clear, it checks the site's own title and asks you before going. "Go to
+  ucsb.edu" goes straight there.
+- **"Search for financial aid"** or "look up parking" types into the
+  site's own search box (even one hidden behind a magnifying glass) and
+  submits it. It never searches through other sites, and it never solves a
+  CAPTCHA.
+- **Asking first, only when it matters.** Every action goes through a
+  check, like a careful friend: scrolling, opening menus and tabs, links
+  and searches just happen. Anything that could buy, pay, send, delete,
+  submit a form or sign you up is read back, with the reason, and only
+  runs after you say "yes". When a button's name is unclear ("Next",
+  "Continue", "OK"), a second AI look decides from what is around it.
+  WebSight never types passwords or card numbers; it tells you which field
+  to fill yourself.
+
+## Memory
+
+- **About me** (Settings): a few lines about you, written once ("I study
+  physics at UCSB; I prefer answers in Catalan; I use VoiceOver"). It goes with every
+  question, so when WebSight has to guess (which campus, which account,
+  which language) it guesses for you. You can also just say **"remember
+  that I'm a physics major"** and it is added.
+- **Per-tab notes:** a short record of what was asked, opened, tried and
+  found in this tab, so "and when are its finals?" after "when does winter
+  start?" answers about winter instead of starting over.
 
 ## Neural voices (default)
 
@@ -191,6 +234,25 @@ Every answer was checked by hand against the page it came from.
 | UCSB facts one link away (Nobel laureates, enrolment) | 2 | 2, taken to the line | 0 | 7–10 s |
 | UCSB academic calendar, finals, chancellor | 8 | 1 | 0 | 5–23 s |
 | Arrival descriptions | 6 | 6 | 0 | 7–13 s |
+
+Recheck after the newer features (same day, E4B, checked by hand):
+
+| Scenario | Questions | Right outcome | Invented a fact | Typical time |
+|---|---|---|---|---|
+| Test calendar: set year and term, finals, last year's winter, FAQ | 4 | 4 | 0 | 6–9 s |
+| Calendar inside a cross-origin frame | 2 | 2 | 0 | 8–9 s |
+| Form safety: email typed, password refused, Continue and Sign out asked first, Next pressed | 7 | 7 | 0 | 0.3–6 s |
+| UCSB Registrar: search the site, read the results | 2 | 2 | 0 | 1–8 s |
+| "Take me to the UChicago / UCSB website" from a blank tab | 2 | 2 | 0 | 2–3 s |
+| Remember a fact, then winter start and "and its finals?" | 3 | 3 | 0 | 0.3–7 s |
+| UCSB "take me to the admissions page", then "the undergraduate one" (3 runs) | 6 | 4 | 0 | 6–19 s |
+
+The admissions pair is the weak spot. In one run the first step gave up
+(fixed: an answer offering a choice is now kept), and in one the
+follow-up opened First-Year Applicants instead of Undergraduate
+Admission (it named the page first, so the miss could be heard). A
+follow-up that matches exactly one option just read out is now pressed
+without asking the model.
 
 The weak spot is the UCSB academic calendar: the model keeps choosing the
 events calendar, and the Registrar's dates only appear after a year is
