@@ -294,24 +294,16 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   setTimeout(() => scanAndDescribe(tabId, tab.windowId, key), 800);
 });
 
+// The page is never scrolled to be seen: its whole text is read from the
+// page itself, and the screenshot shows what is on screen now, as a friend
+// looking at the screen would.
 async function scanAndDescribe(tabId, windowId, key) {
-  try {
-    const settings = await getSettings();
-    const provider = getProvider(settings);
-    if (provider.vision) {
-      const shot = await captureFullPage(tabId, windowId);
-      if (shot) fullShots.set(tabId, { key, base64: shot, t: Date.now() });
-    }
-  } catch {
-    /* scan failed (page navigated away, protected page); describe anyway */
-  }
   await autoDescribe(tabId, windowId, key);
 }
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   describedTabs.delete(tabId);
   tabKeys.delete(tabId);
-  fullShots.delete(tabId);
 });
 
 async function autoDescribe(tabId, windowId, key) {
@@ -319,13 +311,10 @@ async function autoDescribe(tabId, windowId, key) {
     const settings = await getSettings();
     const provider = getProvider(settings);
     if (provider.needsKey && !provider.apiKey) return;
-    const extraction = await extractAll(tabId);
+    const extraction = await extractAll(tabId, '');
     scoutAround(tabId, extraction); // in the background, while it describes
     let screenshotBase64 = '';
-    if (provider.vision) {
-      const cached = fullShots.get(tabId);
-      screenshotBase64 = cached && Date.now() - cached.t < 180000 ? cached.base64 : await captureScreenshot(windowId);
-    }
+    if (provider.vision) screenshotBase64 = await captureScreenshot(windowId);
     const question =
       'I just opened this page. Orient me in at most three short sentences: what site and page this is and what it is for; then the two or three most useful things I can read or do here, by their names, and roughly where they are. If anything blocks the page (a cookie banner, popup, sign-in wall or error), say that first. Skip slogans and decoration.';
     const result = await provider.ask({
@@ -430,55 +419,41 @@ async function downscaleToBase64(dataUrl, maxWidth) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// Full-page knowledge: on page load the tab is swept top to bottom and the
-// screenshots are stitched into one tall image, so answers can see content
-// far below the fold. Cached per tab; capped to keep cost and time sane.
-const fullShots = new Map(); // tabId -> { key, base64, t }
-const MAX_SCAN_SCREENS = 5;
-
-async function stitchScreenshots(dataUrls, maxWidth) {
-  const bitmaps = [];
-  for (const u of dataUrls) {
-    bitmaps.push(await createImageBitmap(await (await fetch(u)).blob()));
-  }
-  const scale = Math.min(1, maxWidth / bitmaps[0].width);
-  const width = Math.round(bitmaps[0].width * scale);
-  const height = bitmaps.reduce((sum, b) => sum + Math.round(b.height * scale), 0);
-  const canvas = new OffscreenCanvas(width, height);
-  const ctx = canvas.getContext('2d');
-  let y = 0;
-  for (const b of bitmaps) {
-    const h = Math.round(b.height * scale);
-    ctx.drawImage(b, 0, y, width, h);
-    y += h;
-  }
-  const jpeg = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.65 });
-  return bytesToBase64(new Uint8Array(await jpeg.arrayBuffer()));
-}
-
-async function captureFullPage(tabId, windowId) {
-  const info = await messageTab(tabId, { type: 'websight-scan-info' });
-  const screens = Math.min(info.screens, MAX_SCAN_SCREENS);
-  if (screens <= 1) return captureScreenshot(windowId);
-  const shots = [];
-  for (let i = 0; i < screens; i++) {
-    await messageTab(tabId, { type: 'websight-scroll-to', y: i * info.viewportH });
-    // Rendering settle time; also respects Chrome's 2-captures/second limit.
-    await sleep(600);
-    shots.push(await chrome.tabs.captureVisibleTab(windowId, { format: 'jpeg', quality: 80 }));
-  }
-  await messageTab(tabId, { type: 'websight-scroll-to', y: info.scrollY });
-  return stitchScreenshots(shots, 1024);
-}
-
 // ---- reading the page, embedded frames included ----
 
 // A calendar, a form or a report is often another site's page inside a
 // frame (UCSB's academic calendar is a Power BI report). Its text and
 // controls are read too, numbered after the page's own, and actions on
 // them are sent to that frame.
-async function extractAll(tabId) {
+// A long page's text does not fit a small model whole. It gets the
+// beginning, then the parts further down that match the question, each
+// under its heading, so the bottom of a long page is not invisible.
+const PAGE_TEXT_BUDGET = 12000;
+let askingAbout = ''; // the question being answered, while handleAsk runs
+
+function fitPageText(pageText, question) {
+  const at = pageText.indexOf('PAGE TEXT:\n');
+  if (at < 0) return pageText;
+  const head = pageText.slice(0, at);
+  const text = pageText.slice(at + 'PAGE TEXT:\n'.length);
+  if (text.length <= PAGE_TEXT_BUDGET) return pageText;
+  const start = text.slice(0, question ? 5000 : PAGE_TEXT_BUDGET);
+  if (!question) return `${head}PAGE TEXT (the beginning of a long page):\n${start}`;
+  const headings = new Set((head.match(/^H[123]: (.*)$/gm) || []).map((h) => h.slice(4).trim()));
+  const rest = text.slice(5000).split('\n').map((l) => (headings.has(l.trim()) ? `# ${l.trim()}` : l)).join('\n');
+  const parts = bestPassages(question, [{ title: '', url: '', text: rest }], 12);
+  let picked = '';
+  for (const p of parts) {
+    const piece = `${p.heading ? `Under "${p.heading}": ` : ''}${p.text}\n\n`;
+    if (picked.length + piece.length > PAGE_TEXT_BUDGET - 5000) break;
+    picked += piece;
+  }
+  return `${head}PAGE TEXT (a long page: its beginning, then the parts further down that match the question):\n${start}${picked ? `\n\n[... further down the page ...]\n\n${picked.trim()}` : ''}`;
+}
+
+async function extractAll(tabId, question = askingAbout) {
   const top = await messageTab(tabId, { type: 'websight-extract' });
+  top.pageText = fitPageText(top.pageText, question);
   let frames = [];
   try {
     frames = await chrome.scripting.executeScript({
@@ -715,6 +690,15 @@ async function goToSite(tab, site, settings, provider, state) {
 // ---- main flow ----
 
 async function handleAsk(question) {
+  askingAbout = question;
+  try {
+    return await answerQuestion(question);
+  } finally {
+    askingAbout = '';
+  }
+}
+
+async function answerQuestion(question) {
   lastManualActivity = Date.now();
   autoSpeech = null;
   const settings = await getSettings();
@@ -775,14 +759,7 @@ async function handleAsk(question) {
   try {
     extraction = await extractAll(tab.id);
     scoutAround(tab.id, extraction); // usually already done when the page loaded
-    if (provider.vision) {
-      const cached = fullShots.get(tab.id);
-      if (cached && cached.key === pageKey(tab.url) && Date.now() - cached.t < 180000) {
-        screenshotBase64 = cached.base64; // whole page, top to bottom
-      } else {
-        screenshotBase64 = await captureScreenshot(tab.windowId);
-      }
-    }
+    if (provider.vision) screenshotBase64 = await captureScreenshot(tab.windowId);
   } catch (err) {
     const msg = 'I could not read this page. Try reloading it and asking again.';
     speak(msg, { rate: settings.rate, voiceName: settings.voiceName });
