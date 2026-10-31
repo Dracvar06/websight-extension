@@ -41,8 +41,19 @@ start_at_login() {
 </dict>
 </plist>
 PLIST
+  # An older copy is stopped first; macOS takes a moment to let go of it,
+  # and registering again too soon fails with "Bootstrap failed: 5".
   launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
-  launchctl bootstrap "gui/$(id -u)" "$AGENTS/$label.plist"
+  for _ in $(seq 1 20); do
+    launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1 || break
+    sleep 0.5
+  done
+  for attempt in 1 2 3; do
+    launchctl bootstrap "gui/$(id -u)" "$AGENTS/$label.plist" 2>/dev/null && return 0
+    sleep 2
+  done
+  echo "Could not set $label to start at login. Try: launchctl bootstrap gui/$(id -u) $AGENTS/$label.plist"
+  exit 1
 }
 
 wait_for() {
