@@ -30,6 +30,15 @@ function findChrome() {
 // Serves dev/fixtures on a local port.
 function serveFixtures() {
   const server = createServer((req, res) => {
+    // A page embedding the calendar from another origin (localhost vs
+    // 127.0.0.1), like UCSB's page embedding a Power BI report.
+    if ((req.url || '').startsWith('/framed.html')) {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(`<!doctype html><title>Academic Calendars - Office of the Registrar</title><h1>Academic Calendars</h1>
+        <p>Please email the Registrar with questions about this page.</p>
+        <iframe src="http://localhost:${server.address().port}/calendar.html" width="800" height="500" title="Calendar report"></iframe>`);
+      return;
+    }
     try {
       const body = readFileSync(join(here, 'fixtures', (req.url || '/').split('?')[0].replace(/^\/+/, '') || 'shop.html'));
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -151,7 +160,7 @@ async function main() {
     const pageText = () =>
       sw.evaluate(async () => {
         const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-        const r = await chrome.tabs.sendMessage(tab.id, { type: 'websight-extract' });
+        const r = await chrome.tabs.sendMessage(tab.id, { type: 'websight-extract' }, { frameId: 0 });
         return r.pageText;
       }).catch((err) => '(could not read: ' + err.message + ')');
 

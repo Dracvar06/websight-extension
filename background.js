@@ -221,7 +221,7 @@ async function autoDescribe(tabId, windowId, key) {
     const settings = await getSettings();
     const provider = getProvider(settings);
     if (provider.needsKey && !provider.apiKey) return;
-    const extraction = await messageTab(tabId, { type: 'websight-extract' });
+    const extraction = await extractAll(tabId);
     scoutAround(tabId, extraction); // in the background, while it describes
     let screenshotBase64 = '';
     if (provider.vision) {
@@ -282,22 +282,26 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 
 // ---- page capture ----
 
+// The content script also runs inside frames (all_frames); a message for
+// "the page" must go to the top frame only, or any frame may answer it.
+const TOP = { frameId: 0 };
+
 async function messageTab(tabId, msg) {
   try {
-    return await chrome.tabs.sendMessage(tabId, msg);
+    return await chrome.tabs.sendMessage(tabId, msg, TOP);
   } catch {
     // Either the page is still loading (right after a click, its content
     // script does not exist yet) or it loaded before the extension did.
     // Wait for the load, then inject if it is still missing.
     await waitForLoad(tabId, 10000);
     try {
-      return await chrome.tabs.sendMessage(tabId, msg);
+      return await chrome.tabs.sendMessage(tabId, msg, TOP);
     } catch {
       await chrome.scripting.executeScript({
         target: { tabId },
         files: ['lib/page-extract.js', 'content.js'],
       });
-      return chrome.tabs.sendMessage(tabId, msg);
+      return chrome.tabs.sendMessage(tabId, msg, TOP);
     }
   }
 }
@@ -367,6 +371,82 @@ async function captureFullPage(tabId, windowId) {
   }
   await messageTab(tabId, { type: 'websight-scroll-to', y: info.scrollY });
   return stitchScreenshots(shots, 1024);
+}
+
+// ---- reading the page, embedded frames included ----
+
+// A calendar, a form or a report is often another site's page inside a
+// frame (UCSB's academic calendar is a Power BI report). Its text and
+// controls are read too, numbered after the page's own, and actions on
+// them are sent to that frame.
+async function extractAll(tabId) {
+  const top = await messageTab(tabId, { type: 'websight-extract' });
+  let frames = [];
+  try {
+    frames = await chrome.scripting.executeScript({
+      target: { tabId, allFrames: true },
+      func: () => {
+        const ws = window.__websight;
+        if (!ws || !ws.extract || window === window.top) return null;
+        if (window.innerWidth * window.innerHeight < 20000) return null; // tracking pixels, hidden frames
+        return { ...ws.extract(), url: location.href, title: document.title };
+      },
+    });
+  } catch {
+    /* no access to the frames; the page itself is enough */
+  }
+  const elements = top.elements.map((e) => ({ ...e, frameId: 0, local: e.index }));
+  let next = elements.reduce((m, e) => Math.max(m, e.index), -1) + 1;
+  const sections = [];
+  for (const f of frames) {
+    const r = f && f.result;
+    if (!r || sections.length >= 3) continue;
+    const text = (r.pageText.split('PAGE TEXT:')[1] || '').trim();
+    if (!r.elements.length && text.length < 40) continue;
+    const lines = [];
+    for (const e of r.elements) {
+      elements.push({ ...e, index: next, frameId: f.frameId, local: e.index });
+      lines.push(`[${next}] ${e.role}: ${e.name}${e.state ? ` (${e.state})` : ''}`);
+      next++;
+    }
+    let host = '';
+    try {
+      host = new URL(r.url).host;
+    } catch {
+      /* about:blank and the like */
+    }
+    sections.push(
+      `EMBEDDED FRAME (part of this page${host ? `, from ${host}` : ''}${r.title ? `, "${r.title}"` : ''}):\nITS CONTROLS:\n${lines.join('\n') || '(none)'}\nITS TEXT:\n${text.slice(0, 6000) || '(none)'}`
+    );
+  }
+  return { pageText: top.pageText + (sections.length ? '\n\n' + sections.join('\n\n') : ''), elements };
+}
+
+// Sends an action to the frame its element lives in.
+function actOn(tabId, action, elements) {
+  const el = (elements || []).find((e) => e.index === action.index);
+  if (el && el.frameId) {
+    return chrome.tabs.sendMessage(tabId, { type: 'websight-action', action: { ...action, index: el.local } }, { frameId: el.frameId });
+  }
+  return messageTab(tabId, { type: 'websight-action', action });
+}
+
+// "Show me where" in the page, or else in one of its frames.
+async function showAnywhere(tabId, msg) {
+  const shown = await messageTab(tabId, msg).catch(() => null);
+  if (shown && shown.ok) return shown;
+  let frames = [];
+  try {
+    frames = await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, func: () => window !== window.top && !!window.__websight });
+  } catch {
+    return shown;
+  }
+  for (const f of frames) {
+    if (!f.result) continue;
+    const inFrame = await chrome.tabs.sendMessage(tabId, msg, { frameId: f.frameId }).catch(() => null);
+    if (inFrame && inFrame.ok) return inFrame;
+  }
+  return shown;
 }
 
 // ---- scouting (lib/scout.js): nearby pages read ahead, as plain text ----
@@ -460,7 +540,7 @@ async function handleAsk(question) {
   let extraction;
   let screenshotBase64 = '';
   try {
-    extraction = await messageTab(tab.id, { type: 'websight-extract' });
+    extraction = await extractAll(tab.id);
     scoutAround(tab.id, extraction); // usually already done when the page loaded
     if (provider.vision) {
       const cached = fullShots.get(tab.id);
@@ -601,7 +681,7 @@ async function handleAsk(question) {
       lastManualActivity = Date.now(); // this answer replaces its description
       try {
         await sleep(500);
-        extraction = await messageTab(tab.id, { type: 'websight-extract' });
+        extraction = await extractAll(tab.id);
         earcon('arrived');
         takenTo = (loaded && loaded.title) || found.page.title;
         result = { ...found.result, action: null };
@@ -661,7 +741,7 @@ async function handleAsk(question) {
     trace('revealing', control.name, value);
     earcon('working');
     speak(value ? `Let me choose ${value} in "${control.name}".` : `Let me open "${control.name}".`, { rate: settings.rate, voiceName: settings.voiceName });
-    const outcome = await messageTab(tab.id, { type: 'websight-action', action: result.action }).catch(() => ({ ok: false }));
+    const outcome = await actOn(tab.id, result.action, extraction.elements).catch(() => ({ ok: false }));
     if (!outcome || !outcome.ok) {
       const why = (outcome && outcome.detail) || 'It did not work.';
       result = { answer: `I tried to open "${control.name}", but: ${why}`, lang: result.lang, action: null, noShow: true };
@@ -671,7 +751,7 @@ async function handleAsk(question) {
     await sleep(1500);
     const shownBefore = new Set(pageLines(extraction.pageText));
     try {
-      extraction = await messageTab(tab.id, { type: 'websight-extract' });
+      extraction = await extractAll(tab.id);
       screenshotBase64 = provider.vision ? await captureScreenshot(tab.windowId) : '';
     } catch {
       result = { answer: 'I opened it, but I could not read the page afterwards.', lang: result.lang, action: null };
@@ -728,7 +808,7 @@ async function handleAsk(question) {
     if (link.href && link.href.split('#')[0] !== (before ? before.url : '').split('#')[0]) {
       await chrome.tabs.update(tab.id, { url: link.href }).catch(() => null);
     } else {
-      await messageTab(tab.id, { type: 'websight-action', action: { type: 'click', index: link.index } }).catch(() => null);
+      await actOn(tab.id, { type: 'click', index: link.index }, extraction.elements).catch(() => null);
     }
     if (!(await waitForNavigation(tab.id, before ? before.url : tab.url))) {
       result = { answer: `I opened "${link.name}", but it stayed on this page, so I could not look there.`, lang: result.lang, action: null };
@@ -739,7 +819,7 @@ async function handleAsk(question) {
     lastManualActivity = Date.now(); // the answer below replaces its description
     try {
       await sleep(500);
-      extraction = await messageTab(tab.id, { type: 'websight-extract' });
+      extraction = await extractAll(tab.id);
       screenshotBase64 = provider.vision ? await captureScreenshot(tab.windowId) : '';
     } catch {
       result = { answer: `I opened "${link.name}", but I could not read the new page.`, lang: result.lang, action: null };
@@ -792,7 +872,7 @@ async function handleAsk(question) {
     // Then put them on the line it came from, to check with their own
     // screen reader.
     // Nothing to point at when the answer is that it is not there.
-    const shown = result.noShow || NOT_HERE.test(result.answer) ? null : await messageTab(tab.id, {
+    const shown = result.noShow || NOT_HERE.test(result.answer) ? null : await showAnywhere(tab.id, {
       type: 'websight-show',
       quote: result.quote || '',
       about: `${question} ${result.answer}`,
@@ -840,7 +920,7 @@ function earcon(kind) {
 
 async function snapshot(tabId) {
   try {
-    return await chrome.tabs.sendMessage(tabId, { type: 'websight-snapshot' });
+    return await chrome.tabs.sendMessage(tabId, { type: 'websight-snapshot' }, TOP);
   } catch {
     return null; // the page is unloading: a navigation started
   }
@@ -883,7 +963,7 @@ async function performAction(tab, action, settings, state) {
   lastManualActivity = Date.now();
   const say = (text, opts = {}) => speak(text, { rate: settings.rate, voiceName: settings.voiceName, ...opts });
   if (action.type === 'scroll') {
-    const outcome = await messageTab(tab.id, { type: 'websight-action', action }).catch(() => ({ ok: false }));
+    const outcome = await actOn(tab.id, action, state.elements).catch(() => ({ ok: false }));
     const spoken = outcome.detail || 'I could not scroll this page.';
     say(spoken);
     return { answer: spoken, actionResult: outcome };
@@ -899,7 +979,7 @@ async function performAction(tab, action, settings, state) {
       await chrome.tabs.goBack(tab.id);
       outcome = { ok: true };
     } else {
-      outcome = await messageTab(tab.id, { type: 'websight-action', action });
+      outcome = await actOn(tab.id, action, state.elements);
     }
   } catch {
     outcome = action.type === 'back' ? { ok: false, detail: 'there is no previous page in this tab.' } : { ok: false };
