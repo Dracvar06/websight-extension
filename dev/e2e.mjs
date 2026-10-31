@@ -5,7 +5,7 @@
 //
 //   cd dev && npm install && npx @puppeteer/browsers install chrome@stable --path browsers
 //   node e2e.mjs                      # fixture page, Ollama
-//   WS_MODEL=gemma4:26b-a4b-24k node e2e.mjs
+//   WS_MODEL=gemma4:e4b node e2e.mjs
 //   WS_PAGES=https://en.wikipedia.org/wiki/Kettle node e2e.mjs   # describe real pages only
 //
 // Results go to dev/results/<time>.json. Needs Ollama and the local voice
@@ -18,7 +18,7 @@ import puppeteer from 'puppeteer-core';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '..');
-const MODEL = process.env.WS_MODEL || 'gemma4:26b-a4b-24k';
+const MODEL = process.env.WS_MODEL || 'gemma4:e4b';
 const ANSWER_TIMEOUT = 180000;
 
 function findChrome() {
@@ -67,7 +67,8 @@ async function main() {
     while (!(await sw.evaluate(() => typeof chrome === 'object' && !!chrome.storage))) await sleep(100);
 
     // Settings as a user of the local mode would have them, plus a log of
-    // everything spoken (the system voice is kept, so it still talks).
+    // everything spoken. Muted: the test records the words, it does not
+    // read them aloud on the laptop.
     const setUp = async () => {
       await sw.evaluate(async (model) => {
         await chrome.storage.local.set({
@@ -79,15 +80,16 @@ async function main() {
         });
         if (!globalThis.__spokenLog) {
           globalThis.__spokenLog = [];
-          const original = chrome.tts.speak.bind(chrome.tts);
           chrome.tts.speak = (text, options, cb) => {
             globalThis.__spokenLog.push({ t: Date.now(), text });
-            return original(text, options, cb);
+            if (typeof cb === 'function') cb();
           };
         }
       }, MODEL);
     };
     await setUp();
+    await sw.evaluate(() => (globalThis.WEBSIGHT_TRACE = true));
+    sw.on('console', (m) => m.text().startsWith('[websight]') && console.log('  ' + m.text()));
     const spoken = () => sw.evaluate(() => globalThis.__spokenLog || []);
     const waitForSpeech = async (since, timeout = ANSWER_TIMEOUT) => {
       const end = Date.now() + timeout;
@@ -161,9 +163,14 @@ async function main() {
         const before = await countAnswers(popup);
         const t0 = Date.now();
         await popup.$eval('#ask-form', (f) => f.requestSubmit());
-        const answer = await waitForAnswer(popup, before);
+        // The popup closes when a click moves the tab to another page, as
+        // it does for a person; what was said is still in the speech log.
+        let answer = await waitForAnswer(popup, before).catch(() => '(popup closed)');
         const seconds = (Date.now() - t0) / 1000;
-        await popup.close();
+        await sleep(1500);
+        const said = (await spoken()).filter((x) => x.t >= t0).map((x) => x.text);
+        if (answer === '(popup closed)') answer = said.join(' ');
+        await popup.close().catch(() => {});
         await sleep(3000); // a click may be loading a new page
         const text = await pageText();
         const remembered = await sw.evaluate(async () => {
@@ -171,8 +178,8 @@ async function main() {
           return Object.entries(all).filter(([k]) => k.startsWith('tab:')).map(([k, v]) => `${k}=${v.history.length}`).join(' ');
         });
         console.log('  conversation turns stored:', remembered);
-        results.steps.push({ step: 'question', question, answer, seconds, url: page.url(), pageTextChars: text.length, pageText: text });
-        console.log(`Q: ${question}\n  A: ${answer} (${seconds.toFixed(1)} s, now on ${page.url()}, page text ${text.length} chars)`);
+        results.steps.push({ step: 'question', question, answer, said, seconds, url: page.url(), pageTextChars: text.length, pageText: text });
+        console.log(`Q: ${question}\n  said: ${said.join(' | ')}\n  A: ${answer} (${seconds.toFixed(1)} s, now on ${page.url()}, page text ${text.length} chars)`);
       }
       return;
     }

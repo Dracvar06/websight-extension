@@ -15,7 +15,7 @@ voice out, and it can click, focus or fill things when you ask.
      one-time 5 million token free grant for new accounts, no card.
    - **Ollama** (local, sees screenshots): no key, no quota, nothing leaves
      the computer. Install from https://ollama.com, keep the app running, and
-     pull a vision model once: `ollama pull qwen3.5:9b`. Answers are slower
+     pull a vision model once: `ollama pull gemma4:e4b`. Answers are slower
      than the cloud options. If Test connection reports 403, allow browser
      extensions: `launchctl setenv OLLAMA_ORIGINS "chrome-extension://*"`
      and restart Ollama.

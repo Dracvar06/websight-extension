@@ -10,17 +10,26 @@ const DEFAULT_SETTINGS = {
   deepseekKey: '',
   deepseekModel: 'deepseek-v4-flash',
   ollamaUrl: 'http://localhost:11434',
-  ollamaModel: 'qwen3.5:9b',
+  ollamaModel: 'gemma4:e4b',
   rate: 1.4,
   speechLang: 'auto',
   voiceName: '',
   autoDescribe: true,
-  ttsEngine: 'system',
+  ttsEngine: 'neural',
   ttsUrl: 'http://localhost:8100/v1',
 };
 
 // Element texts that require a spoken confirmation before acting.
 const DANGEROUS = /(buy|purchase|order|pay|checkout|confirm|delete|remove|submit|send|subscribe|transfer|comprar|pagar|pedido|eliminar|borrar|enviar|kaufen|bezahlen|bestellen|löschen|senden|acheter|payer|supprimer|envoyer|acquista|paga|elimina|invia)/i;
+const CLAIMS_ACTION = /\b(I'?ve|I have|I just|I)\s+(clicked|pressed|opened|taken you|gone|went|scrolled|typed|filled|submitted|navigated|moved you|brought you)\b|^(done|clicked|opened)\b/i;
+const NOT_HERE = /\b(don'?t|do not|can'?t|cannot|could ?n[o']t) (see|find)\b|\b(does ?n[o']t|do not|doesn'?t) (have|list|show|mention|include|contain|say)\b|\bno (information|details|mention)\b|\bnot (sure|listed|shown|mentioned|on this page)\b|\bisn'?t (listed|shown|here|on)\b/i;
+const IS_QUESTION = /\?$|^(what|when|where|who|whom|which|why|how|is|are|was|were|do|does|did|can|could|should|will|would|has|have|qu[eé]|quan|quin|quina|on|com|qui|cu[aá]ndo|d[oó]nde|qui[eé]n|c[oó]mo|cu[aá]l)\b/i;
+// Each decision handleAsk makes, for the end-to-end test (dev/e2e.mjs
+// turns it on). Off for everyone else.
+function trace(...args) {
+  if (globalThis.WEBSIGHT_TRACE) console.log('[websight]', ...args);
+}
+
 const CONFIRM_WORDS = /^\s*(yes|yeah|yep|sure|confirm|do it|go ahead|sí|si|vale|oui|ja|okay|ok|sim|da)\b/i;
 
 async function getSettings() {
@@ -131,7 +140,11 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   const key = pageKey(changeInfo.url);
   if (tabKeys.get(tabId) === key) return; // same page, cosmetic URL change
   tabKeys.set(tabId, key);
-  chrome.storage.session.remove(`tab:${tabId}`);
+  // A new page: its elements and any pending yes/no no longer apply, but
+  // the conversation goes on ("take me there", then "when is it?").
+  getTabState(tabId).then((state) =>
+    setTabState(tabId, { ...state, elements: [], pendingAction: null })
+  );
   // A description of the page they just left is no use to them any more.
   if (autoSpeech && autoSpeech.tabId === tabId) {
     autoSpeech = null;
@@ -254,12 +267,19 @@ async function messageTab(tabId, msg) {
   try {
     return await chrome.tabs.sendMessage(tabId, msg);
   } catch {
-    // Content script missing (page loaded before install). Inject and retry.
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      files: ['lib/page-extract.js', 'content.js'],
-    });
-    return chrome.tabs.sendMessage(tabId, msg);
+    // Either the page is still loading (right after a click, its content
+    // script does not exist yet) or it loaded before the extension did.
+    // Wait for the load, then inject if it is still missing.
+    await waitForLoad(tabId, 10000);
+    try {
+      return await chrome.tabs.sendMessage(tabId, msg);
+    } catch {
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        files: ['lib/page-extract.js', 'content.js'],
+      });
+      return chrome.tabs.sendMessage(tabId, msg);
+    }
   }
 }
 
@@ -438,6 +458,100 @@ async function handleAsk(question) {
       speak(msg, { rate: settings.rate, voiceName: settings.voiceName });
       return { answer: msg, error: true, detail: err.detail || String(err) };
     }
+  }
+
+  // A model that says it clicked or went somewhere without asking for the
+  // action has done nothing; a person who cannot see the screen would
+  // believe it. Seen in testing: "I've taken you back to the previous page".
+  if (result && !result.action && CLAIMS_ACTION.test(result.answer)) {
+    console.warn('WebSight: dropped an answer claiming an action that was not taken:', result.answer);
+    result = { answer: 'I have not done anything on the page. Could you say again what you would like me to do?', lang: result.lang, action: null };
+  }
+
+  // Not on this page, but a link here probably leads to it: go and look,
+  // at most two pages deep, saying where at each step. Links only, so
+  // nothing is bought, sent or submitted on the way.
+  trace('asked', JSON.stringify(question), '->', JSON.stringify(result && { answer: result.answer, action: result.action }));
+  // A question is answered, never just clicked away from: "When does
+  // winter quarter start?" once got a click on an unrelated event and
+  // "Done". Treated as looking on that page, so an answer still comes.
+  const keepAnswering = (r) => {
+    if (r && r.action && r.action.type === 'click' && IS_QUESTION.test(question.trim())) r.action.type = 'explore';
+    return r;
+  };
+  keepAnswering(result);
+  let hops = 0;
+  let foundOn = '';
+  let answeredThere = false;
+  if (result && !result.action && NOT_HERE.test(result.answer)) {
+    // "I don't see that here, I can look if you like": a small model offers
+    // instead of looking far more often than it picks a link. Asking it only
+    // which link to try is a narrow choice it makes well.
+    const pick = await provider
+      .ask({
+        history: [],
+        question: `(Note from the app: the answer to the question below is not on this page. Return the action {"type": "explore", "index": N} with the ONE link most likely to lead to it, and in "answer" a few words on where you will look. If no link is a reasonable bet, return action null.)\n\nQuestion: ${question}`,
+        pageText: extraction.pageText,
+        screenshotBase64: '',
+      })
+      .catch(() => null);
+    trace('which link?', JSON.stringify(pick && pick.action));
+    if (pick && pick.action && pick.action.type === 'explore') result = { ...pick, lang: result.lang || pick.lang };
+  }
+  while (result && result.action && result.action.type === 'explore') {
+    const link = extraction.elements.find((e) => e.index === result.action.index);
+    if (hops >= 2 || !link || link.role !== 'link' || DANGEROUS.test(link.name)) {
+      result = { answer: hops ? `I looked, but I could not find that. You are now on the page "${foundOn}"; say "go back" to return.` : 'I could not find a link here that leads to that.', lang: result.lang, action: null };
+      answeredThere = false;
+      break;
+    }
+    hops++;
+    trace('exploring', link.name, link.to || '');
+    earcon('working');
+    speak(`That is not on this page. Let me look on "${link.name}".`, { rate: settings.rate, voiceName: settings.voiceName });
+    // Opened by its address rather than clicked: a menu heading such as
+    // UCSB's "About" is a link that only opens its dropdown when clicked.
+    const before = await snapshot(tab.id);
+    if (link.href && link.href.split('#')[0] !== (before ? before.url : '').split('#')[0]) {
+      await chrome.tabs.update(tab.id, { url: link.href }).catch(() => null);
+    } else {
+      await messageTab(tab.id, { type: 'websight-action', action: { type: 'click', index: link.index } }).catch(() => null);
+    }
+    await sleep(1200);
+    const moved = await snapshot(tab.id);
+    if (moved && before && moved.url === before.url) {
+      result = { answer: `I opened "${link.name}", but it stayed on this page, so I could not look there.`, lang: result.lang, action: null };
+      answeredThere = false;
+      break;
+    }
+    const loaded = await waitForLoad(tab.id);
+    lastManualActivity = Date.now(); // the answer below replaces its description
+    try {
+      await sleep(500);
+      extraction = await messageTab(tab.id, { type: 'websight-extract' });
+      screenshotBase64 = provider.vision ? await captureScreenshot(tab.windowId) : '';
+    } catch {
+      result = { answer: `I opened "${link.name}", but I could not read the new page.`, lang: result.lang, action: null };
+      answeredThere = false;
+      break;
+    }
+    foundOn = (loaded && loaded.title) || link.name;
+    answeredThere = true;
+    earcon('arrived');
+    result = await provider
+      .ask({
+        history: state.history,
+        question: `${question}\n\n(Note from the app: you followed the link "${link.name}" to look for this and are now on a new page. If the answer is here, give it. ${hops >= 2 ? 'Do not explore further: if it is not here, say honestly that you could not find it.' : 'If not, you may explore one more link.'})`,
+        pageText: extraction.pageText,
+        screenshotBase64,
+      })
+      .catch(() => ({ answer: 'I opened the page, but I could not get an answer about it.', lang: '', action: null }));
+    keepAnswering(result);
+    trace('on the new page ->', JSON.stringify({ answer: result.answer, action: result.action }));
+  }
+  if (answeredThere && !result.action) {
+    // Where it was found is said by the app, not left to the model.
+    result.answer = `On the page "${foundOn}": ${result.answer}`;
   }
 
   // Keep history light: text only, no screenshots, last 8 exchanges.
