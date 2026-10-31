@@ -33,6 +33,20 @@ function trace(...args) {
 }
 
 const ANNOUNCES = /\b(I will|I'?ll|let me|I am going to|I'?m going to) (read|list|tell|go through|give|explain|describe)\b(?![^.]*\bif you\b)|\b(here (they|it) (is|are)|as follows|are listed below)[.:]?\s*$/i;
+// "Academic year: 2026-2027; Terms tab: Winter": what dropdowns and tabs
+// show now, so the model can see that "last year" is not what is chosen.
+function chosenNow(elements) {
+  const parts = [];
+  for (const e of elements || []) {
+    if (e.role === 'dropdown' && e.state) parts.push(`${e.name}: ${(e.state.match(/now: ([^;]*)/) || [])[1] || '?'}`);
+    if (e.state === 'tab, selected') parts.push(`tab selected: ${e.name}`);
+  }
+  return parts.join('; ') || 'nothing to choose';
+}
+
+// The page text as lines, for telling what a click made appear.
+const pageLines = (text) => (text.split('PAGE TEXT:')[1] || text).split('\n').map((l) => l.trim()).filter((l) => l.length > 3);
+
 const PROMISES = /\b(I'?ll|I will|let me|I am going to|I'?m going to|I can)\s+(click|press|open|take you|look|go|check|find|search|navigate)\b/i;
 const CONFIRM_WORDS = /^\s*(yes|yeah|yep|sure|confirm|do it|go ahead|sí|si|vale|oui|ja|okay|ok|sim|da)\b/i;
 
@@ -548,7 +562,11 @@ async function handleAsk(question) {
   // winter quarter start?" once got a click on an unrelated event and
   // "Done". Treated as looking on that page, so an answer still comes.
   const keepAnswering = (r) => {
-    if (r && r.action && r.action.type === 'click' && IS_QUESTION.test(question.trim())) r.action.type = 'explore';
+    if (r && r.action && r.action.type === 'click' && IS_QUESTION.test(question.trim())) {
+      // A tab or a collapsed section shows more here; a link goes elsewhere.
+      const el = extraction.elements.find((e) => e.index === r.action.index);
+      r.action.type = el && el.href ? 'explore' : 'reveal';
+    }
     return r;
   };
   keepAnswering(result);
@@ -601,16 +619,91 @@ async function handleAsk(question) {
     const pick = await provider
       .ask({
         history: [],
-        question: `(Note from the app: the answer to the question below is not on this page. Return the action {"type": "explore", "index": N} with the ONE link most likely to lead to it, and in "answer" a few words on where you will look. If no link is a reasonable bet, return action null.)\n\nQuestion: ${question}`,
+        question: `(Note from the app: the answer to the question below is not visible on this page. If a dropdown, tab or collapsed section here probably shows it, return {"type": "reveal", "index": N} (with "value" set to the option for a dropdown). Otherwise return {"type": "explore", "index": N} with the ONE link most likely to lead to it. In "answer" say in a few words what you will open. If nothing is a reasonable bet, return action null.)\n\nQuestion: ${question}`,
         pageText: extraction.pageText,
         screenshotBase64: '',
       })
       .catch(() => null);
     trace('which link?', JSON.stringify(pick && pick.action));
-    if (pick && pick.action && (pick.action.type === 'explore' || pick.action.type === 'click')) {
-      result = { ...pick, action: { ...pick.action, type: 'explore' }, lang: result.lang || pick.lang };
+    if (pick && pick.action && ['explore', 'click', 'reveal'].includes(pick.action.type)) {
+      result = keepAnswering({ ...pick, lang: result.lang || pick.lang });
     }
   }
+  // The answer is behind a control on this page (a year in a dropdown, a
+  // term in a tab, a collapsed question): open it, read the page again and
+  // ask again, up to three times, saying each time what it opens.
+  const opened = [];
+  while (result && result.action && result.action.type === 'reveal') {
+    const control = extraction.elements.find((e) => e.index === result.action.index);
+    if (opened.length >= 3 || !control || DANGEROUS.test(control.name)) {
+      result = opened.length
+        ? { answer: 'I opened what I could here, but I still cannot see that.', lang: result.lang, action: null }
+        : firstAnswer && !firstAnswer.action
+        ? firstAnswer
+        : { answer: 'I could not find that on this page.', lang: result.lang, action: null };
+      break;
+    }
+    let value = result.action.value ? String(result.action.value) : '';
+    if (control.role === 'dropdown' && !value) {
+      // A dropdown needs an option; ask for exactly that.
+      const which = await provider
+        .ask({
+          history: [],
+          question: `(Note from the app: to answer the question below, which option of the dropdown "${control.name}" should be chosen? It is ${control.state}. Return {"type": "reveal", "index": ${control.index}, "value": "<one option, copied exactly>"}.)\n\nQuestion: ${question}`,
+          pageText: extraction.pageText,
+          screenshotBase64: '',
+        })
+        .catch(() => null);
+      value = (which && which.action && which.action.value) || '';
+      result.action.value = value;
+      trace('dropdown option ->', value);
+    }
+    trace('revealing', control.name, value);
+    earcon('working');
+    speak(value ? `Let me choose ${value} in "${control.name}".` : `Let me open "${control.name}".`, { rate: settings.rate, voiceName: settings.voiceName });
+    const outcome = await messageTab(tab.id, { type: 'websight-action', action: result.action }).catch(() => ({ ok: false }));
+    if (!outcome || !outcome.ok) {
+      const why = (outcome && outcome.detail) || 'It did not work.';
+      result = { answer: `I tried to open "${control.name}", but: ${why}`, lang: result.lang, action: null, noShow: true };
+      break;
+    }
+    opened.push(value ? `chose ${value} in "${control.name}"` : `opened "${control.name}"`);
+    await sleep(1500);
+    const shownBefore = new Set(pageLines(extraction.pageText));
+    try {
+      extraction = await messageTab(tab.id, { type: 'websight-extract' });
+      screenshotBase64 = provider.vision ? await captureScreenshot(tab.windowId) : '';
+    } catch {
+      result = { answer: 'I opened it, but I could not read the page afterwards.', lang: result.lang, action: null };
+      break;
+    }
+    result = keepAnswering(
+      await provider
+        .ask({
+          history: state.history,
+          question: `${question}\n\n(Note from the app: you ${opened[opened.length - 1]}. That made this text appear on the page:\n\"${pageLines(extraction.pageText).filter((l) => !shownBefore.has(l)).join(' / ').slice(0, 1500) || '(no new text)'}\"\nWhat the page has chosen now: ${chosenNow(extraction.elements)}.\nFirst check that this matches what they asked (the right year, term, plan). If it does and the text answers the question, answer directly and plainly. ${opened.length < 3 ? 'If something else still has to be chosen (another year, another tab), reveal it instead of answering.' : 'Do not open anything more; if the choice does not match, say so.'})`,
+          pageText: extraction.pageText,
+          screenshotBase64,
+        })
+        .catch(() => ({ answer: 'I opened it, but I could not get an answer.', lang: '', action: null }))
+    );
+    trace('after revealing ->', JSON.stringify({ answer: result.answer, action: result.action }));
+    if (result && !result.action && NOT_HERE.test(result.answer) && opened.length < 3) {
+      // Often a second choice is needed (last year's winter term: the year,
+      // then the tab), and a small model stops after the first.
+      const next = await provider
+        .ask({
+          history: [],
+          question: `(Note from the app: so far you ${opened.join(' and ')}, and the answer to the question below is still not visible. If another dropdown option, tab or collapsed section here probably shows it, return {"type": "reveal", "index": N} with "value" set to the option for a dropdown. Otherwise return action null.)\n\nQuestion: ${question}`,
+          pageText: extraction.pageText,
+          screenshotBase64: '',
+        })
+        .catch(() => null);
+      trace('reveal what next?', JSON.stringify(next && next.action));
+      if (next && next.action && next.action.type === 'reveal') result = { ...next, lang: result.lang || next.lang };
+    }
+  }
+
   while (result && result.action && result.action.type === 'explore') {
     const link = extraction.elements.find((e) => e.index === result.action.index);
     const leadsElsewhere = link && link.href && sansHash(link.href) !== sansHash((await chrome.tabs.get(tab.id)).url);
@@ -699,13 +792,14 @@ async function handleAsk(question) {
     // Then put them on the line it came from, to check with their own
     // screen reader.
     // Nothing to point at when the answer is that it is not there.
-    const shown = NOT_HERE.test(result.answer) ? null : await messageTab(tab.id, {
+    const shown = result.noShow || NOT_HERE.test(result.answer) ? null : await messageTab(tab.id, {
       type: 'websight-show',
       quote: result.quote || '',
       about: `${question} ${result.answer}`,
       numbers: (result.answer.match(/\d[\d.,:/]*\d|\d{2,}/g) || []).filter((n) => !missing.includes(n)),
     }).catch(() => null);
     trace('show me where:', JSON.stringify(result.quote), '->', JSON.stringify(shown));
+    if (opened.length) spoken += ` On the page, I ${opened.join(' and ')}.`;
     if (takenTo) {
       spoken += ` That is on the page "${takenTo}", so I have taken you there${shown && shown.ok ? ' and put the cursor on that line' : ''}. Say "go back" to return.`;
     } else if (shown && shown.ok) {

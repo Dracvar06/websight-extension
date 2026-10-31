@@ -105,8 +105,9 @@ async function main() {
     // same conversation, as a person would (dev/scenarios/*.json).
     const scenario = process.env.WS_SCENARIO ? JSON.parse(readFileSync(process.env.WS_SCENARIO, 'utf8')) : null;
     if (scenario) results.scenario = process.env.WS_SCENARIO;
+    const fixtures = `http://127.0.0.1:${server.address().port}/`;
     const pages = scenario
-      ? [scenario.url]
+      ? [scenario.url.replace(/^fixture:/, fixtures)]
       : process.env.WS_PAGES
       ? process.env.WS_PAGES.split(',')
       : [`http://127.0.0.1:${server.address().port}/shop.html`];

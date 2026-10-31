@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Academic Calendar - Westfield College</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; max-width: 760px; }
+  [role="tab"][aria-selected="true"] { font-weight: bold; border-bottom: 3px solid #036; }
+  .panel[hidden], .answer[hidden] { display: none; }
+</style>
+</head>
+<body>
+<h1>Academic Calendar</h1>
+<p>Choose an academic year and a term to see its dates.</p>
+
+<label for="year">Academic year</label>
+<select id="year">
+  <option value="2025">2025-2026</option>
+  <option value="2026" selected>2026-2027</option>
+</select>
+
+<div role="tablist" aria-label="Terms">
+  <button role="tab" id="t-fall" aria-selected="true" aria-controls="p">Fall</button>
+  <button role="tab" id="t-winter" aria-selected="false" aria-controls="p">Winter</button>
+  <button role="tab" id="t-spring" aria-selected="false" aria-controls="p">Spring</button>
+</div>
+<div id="p" class="panel" role="tabpanel"></div>
+
+<h2>Frequently asked questions</h2>
+<button id="faq" aria-expanded="false" aria-controls="faq-a">When are final exams?</button>
+<div id="faq-a" class="answer" hidden>Final exams take place in the last week of each term (finals week).</div>
+
+<script>
+  // Dates only exist for the chosen year and term, like real calendar widgets.
+  const DATES = {
+    2025: { fall: 'Instruction begins September 25, 2025. Last day of finals: December 12, 2025.',
+            winter: 'Instruction begins January 5, 2026. Last day of finals: March 20, 2026.',
+            spring: 'Instruction begins March 30, 2026. Last day of finals: June 12, 2026.' },
+    2026: { fall: 'Instruction begins September 24, 2026. Last day of finals: December 11, 2026.',
+            winter: 'Instruction begins January 6, 2027. Last day of finals: March 19, 2027.',
+            spring: 'Instruction begins March 29, 2027. Last day of finals: June 11, 2027.' },
+  };
+  let term = 'fall';
+  const year = document.getElementById('year');
+  const panel = document.getElementById('p');
+  function render() {
+    panel.textContent = DATES[year.value][term];
+    for (const t of document.querySelectorAll('[role="tab"]')) t.setAttribute('aria-selected', String(t.id === 't-' + term));
+  }
+  for (const t of document.querySelectorAll('[role="tab"]')) {
+    t.addEventListener('click', () => { term = t.id.slice(2); render(); });
+  }
+  year.addEventListener('change', render);
+  document.getElementById('faq').addEventListener('click', (e) => {
+    const open = e.target.getAttribute('aria-expanded') === 'true';
+    e.target.setAttribute('aria-expanded', String(!open));
+    document.getElementById('faq-a').hidden = open;
+  });
+  render();
+</script>
+</body>
+</html>

@@ -75,6 +75,32 @@
       }
       return { ok: true, detail: `Clicked ${name}.` };
     }
+    if (action.type === 'reveal') {
+      // Only controls that show more of the page: a dropdown, a tab, a
+      // collapsed section. Never a link (that is "explore") and never a
+      // button that could submit a form.
+      if (el.tagName === 'SELECT') {
+        const want = String(action.value || '').toLowerCase().trim();
+        const option = Array.from(el.options).find((o) => o.text.toLowerCase().trim() === want) ||
+          Array.from(el.options).find((o) => want && o.text.toLowerCase().includes(want));
+        if (!option) return { ok: false, detail: `There is no option "${action.value}" in ${name}.` };
+        el.value = option.value;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        return { ok: true, detail: `Chose ${option.text.trim()} in ${name}.` };
+      }
+      if (el.tagName === 'A' && el.getAttribute('href') && !el.getAttribute('href').startsWith('#')) {
+        return { ok: false, detail: 'That is a link to another page, not something that opens here.' };
+      }
+      // A button sends a form only when it is in one ("type" defaults to
+      // submit even for buttons that are not).
+      if (el.form && (el.type || '').toLowerCase() === 'submit') {
+        return { ok: false, detail: 'That button would send a form, so I did not press it.' };
+      }
+      el.focus();
+      syntheticClick(el);
+      return { ok: true, detail: `Opened ${name}.` };
+    }
     if (action.type === 'fill') {
       el.focus();
       const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
