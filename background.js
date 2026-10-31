@@ -32,6 +32,7 @@ function trace(...args) {
   if (globalThis.WEBSIGHT_TRACE) console.log('[websight]', ...args);
 }
 
+const ANNOUNCES = /\b(I will|I'?ll|let me|I am going to|I'?m going to) (read|list|tell|go through|give|explain|describe)\b(?![^.]*\bif you\b)|\b(here (they|it) (is|are)|as follows|are listed below)[.:]?\s*$/i;
 const PROMISES = /\b(I'?ll|I will|let me|I am going to|I'?m going to|I can)\s+(click|press|open|take you|look|go|check|find|search|navigate)\b/i;
 const CONFIRM_WORDS = /^\s*(yes|yeah|yep|sure|confirm|do it|go ahead|sí|si|vale|oui|ja|okay|ok|sim|da)\b/i;
 
@@ -514,6 +515,21 @@ async function handleAsk(question) {
       speak(msg, { rate: settings.rate, voiceName: settings.voiceName });
       return { answer: msg, error: true, detail: err.detail || String(err) };
     }
+  }
+
+  // "There are four plans. I will read out the deadlines." and then nothing:
+  // a small model announces a list instead of giving it. Asked once more.
+  if (result && !result.action && ANNOUNCES.test(result.answer)) {
+    const full = await provider
+      .ask({
+        history: state.history,
+        question: `${question}\n\n(Note from the app: your answer announced the details but did not give them. Give them now, in full, briefly.)`,
+        pageText: extraction.pageText,
+        screenshotBase64: '',
+      })
+      .catch(() => null);
+    trace('announced without saying; asked again ->', JSON.stringify(full && full.answer));
+    if (full && !full.action && !ANNOUNCES.test(full.answer)) result = full;
   }
 
   // A model that says it clicked or went somewhere without asking for the
