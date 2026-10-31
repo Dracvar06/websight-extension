@@ -20,6 +20,7 @@ const DEFAULT_SETTINGS = {
   autoDescribe: true,
   ttsEngine: 'neural',
   ttsUrl: 'http://localhost:8100/v1',
+  aboutMe: '',
 };
 
 // Element texts that require a spoken confirmation before acting.
@@ -142,6 +143,7 @@ function hasChoices(elements) {
 // The page text as lines, for telling what a click made appear.
 const pageLines = (text) => (text.split('PAGE TEXT:')[1] || text).split('\n').map((l) => l.trim()).filter((l) => l.length > 3);
 
+const REMEMBER = /^(?:please\s+)?(?:remember|recorda|recuerda)(?:\s+(?:that|que))?\s+(.+?)[.!]*$/i;
 const SEARCH_COMMAND = /^(?:please\s+)?(?:search|look up|busca|cerca)\s+(?:on\s+)?(?:this site|the site|this page|here|aquí|aqu[ií])?\s*(?:for|per|por)?\s*(.+?)[.?!]*$/i;
 const PROMISES = /\b(I'?ll|I will|let me|I am going to|I'?m going to|I can)\s+(click|press|open|take you|look|go|check|find|search|navigate)\b/i;
 const CONFIRM_WORDS = /^\s*(yes|yeah|yep|sure|confirm|do it|go ahead|sí|si|vale|oui|ja|okay|ok|sim|da)\b/i;
@@ -638,11 +640,23 @@ async function pageTitle(url) {
   }
 }
 
+// "I'm a physics major" said back as "you're a physics major".
+function yours(text) {
+  const swap = { "i'm": "you're", 'i am': 'you are', i: 'you', my: 'your', me: 'you', mine: 'yours', 'i’m': 'you’re' };
+  return text.replace(/\b(i['’]m|i am|i|my|me|mine)\b/gi, (w) => swap[w.toLowerCase()] || w);
+}
+
+function noteDown(state, line) {
+  state.notes = [...(state.notes || []), `- ${line}`].slice(-12);
+}
+
 async function goToSite(tab, site, settings, provider, state) {
   const say = (text) => speak(text, { rate: settings.rate, voiceName: settings.voiceName });
   const go = async (url, words) => {
     say(words);
     earcon('working');
+    noteDown(state, `Went to ${url} (${words.replace(/^Going to /, '').slice(0, 120)})`);
+    await setTabState(tab.id, state);
     await chrome.tabs.update(tab.id, { url });
     await waitForNavigation(tab.id, tab.url, 5000);
     await waitForLoad(tab.id);
@@ -708,6 +722,18 @@ async function handleAsk(question) {
   const onWebPage = /^https?:/i.test(tab.url || '');
   const state = await getTabState(tab.id);
 
+  // "Remember that I'm a physics major": added to About me (Settings), which
+  // every question carries, so later guesses fit them.
+  const remember = question.trim().match(REMEMBER);
+  if (remember) {
+    const fact = remember[1].trim().replace(/^i('m| am)\b/i, 'I am');
+    const aboutMe = `${settings.aboutMe ? settings.aboutMe + '\n' : ''}${fact[0].toUpperCase()}${fact.slice(1)}.`.slice(-2000);
+    await chrome.storage.local.set({ aboutMe });
+    const msg = `I will remember that ${yours(remember[1].trim().replace(/[.!]+$/, ''))}. It is in Settings, under About me, if you want to change it.`;
+    speak(msg, { rate: settings.rate, voiceName: settings.voiceName });
+    return { answer: msg };
+  }
+
   // "Take me to the UChicago website" works anywhere, a new tab included.
   const site = !state.pendingAction && siteRequest(question, onWebPage);
   if (site) return goToSite(tab, site, settings, provider, state);
@@ -762,9 +788,12 @@ async function handleAsk(question) {
       result = { answer: '', lang: '', action: { type: 'search', index: searchBox.index, value: searchFor[1].trim() } };
       trace('search command ->', searchBox.name, JSON.stringify(searchFor[1]));
     } else {
+      // What was tried and found earlier in this tab, so a follow-up builds
+      // on it (the conversation history has the words, not what was done).
+      const notes = (state.notes || []).slice(-10).join('\n');
       result = await provider.ask({
         history: state.history,
-        question,
+        question: notes ? `${question}\n\n(Notes from earlier in this tab, oldest first:\n${notes})` : question,
         pageText: extraction.pageText,
         screenshotBase64,
       });
@@ -1186,6 +1215,9 @@ async function handleAsk(question) {
     } else if (shown && shown.ok) {
       spoken += ' I have put the cursor on that line, so your screen reader can read it from the page.';
     }
+    const where = (extraction.pageText.match(/^TITLE: (.*)$/m) || [])[1] || 'this page';
+    noteDown(state, `On "${where}": asked "${question.slice(0, 80)}"${opened.length ? `; I ${opened.join(', ')}` : ''}; answer: ${result.answer.slice(0, 160)}${result.quote ? `; from the page line "${result.quote.slice(0, 200)}"` : ''}`);
+    await setTabState(tab.id, state);
     speak(spoken, { lang: result.lang, rate: settings.rate, voiceName: settings.voiceName });
     return { answer: spoken, note: fallbackNote || undefined };
   }

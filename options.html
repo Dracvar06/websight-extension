@@ -47,6 +47,13 @@
   <p id="save-status" role="status" aria-live="polite"></p>
 
   <fieldset>
+    <legend>About me</legend>
+    <label for="aboutMe">A few lines about you, for WebSight to keep in mind</label>
+    <textarea id="aboutMe" rows="4" style="width: 100%" aria-describedby="about-note"></textarea>
+    <p class="note" id="about-note">For example: "I am a blind student at UCSB. I use VoiceOver. I mostly use my university's websites and Gmail." WebSight gives this to the AI with every question, so its guesses fit you (which campus, which language, what "my classes" means). You can also say "remember that..." while talking to it, and it is added here. It stays on this computer, except that a cloud AI provider receives it with each question.</p>
+  </fieldset>
+
+  <fieldset>
     <legend>AI provider</legend>
     <label for="provider">Which AI to use</label>
     <select id="provider">

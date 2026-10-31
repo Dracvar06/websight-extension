@@ -20,10 +20,11 @@ const DEFAULTS = {
   whisperUrl: 'https://api.groq.com/openai/v1',
   whisperKey: '',
   whisperModel: 'whisper-large-v3-turbo',
+  aboutMe: '',
 };
 
 const el = {};
-for (const id of ['provider', 'geminiKey', 'geminiModel', 'deepseekKey', 'deepseekModel', 'ollamaUrl', 'ollamaModel', 'rate', 'voiceName', 'ttsEngine', 'ttsUrl', 'speechEngine', 'speechLang', 'whisperUrl', 'whisperKey', 'whisperModel']) {
+for (const id of ['provider', 'geminiKey', 'geminiModel', 'deepseekKey', 'deepseekModel', 'ollamaUrl', 'ollamaModel', 'rate', 'voiceName', 'ttsEngine', 'ttsUrl', 'speechEngine', 'speechLang', 'whisperUrl', 'whisperKey', 'whisperModel', 'aboutMe']) {
   el[id] = document.getElementById(id);
 }
 const rateValueEl = document.getElementById('rate-value');
@@ -86,6 +87,7 @@ function save() {
       whisperUrl: el.whisperUrl.value.trim() || DEFAULTS.whisperUrl,
       whisperKey: el.whisperKey.value.trim(),
       whisperModel: el.whisperModel.value.trim() || DEFAULTS.whisperModel,
+      aboutMe: el.aboutMe.value.trim().slice(0, 2000),
     });
     saveStatusEl.textContent = 'Saved.';
     setTimeout(() => (saveStatusEl.textContent = ''), 2000);
