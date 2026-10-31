@@ -60,8 +60,10 @@
       <option value="gemini">Gemini - sees screenshots, free tier with daily limit</option>
       <option value="deepseek">DeepSeek - text only, 5 million free tokens</option>
       <option value="ollama">Ollama - local on this computer, unlimited and private</option>
+      <option value="compat">Groq, OpenRouter or OpenAI - sees screenshots, free or paid depending on the service</option>
+      <option value="claude">Claude - sees screenshots, very reliable, paid per use</option>
     </select>
-    <p class="note">DeepSeek cannot see images or screenshots. Ollama runs entirely on this computer: no quota, no cost, nothing leaves the machine, but answers are slower and need the Ollama app running.</p>
+    <p class="note">DeepSeek cannot see images or screenshots. Ollama runs entirely on this computer: no quota, no cost, nothing leaves the machine, but answers are slower and need the Ollama app running. When a cloud AI is busy or at its limit, Ollama answers instead, if it is running.</p>
     <button type="button" id="test-connection">Test connection</button>
     <p id="test-status" role="status" aria-live="polite"></p>
   </fieldset>
@@ -74,6 +76,33 @@
     <label for="geminiModel">Gemini model</label>
     <input type="text" id="geminiModel" aria-describedby="gemini-model-note">
     <p class="note" id="gemini-model-note">Default: gemini-3.8-flash, the current Flash in AI Studio. Older names may be closed or busier; press Test connection to see what your key can use.</p>
+  </fieldset>
+
+  <fieldset>
+    <legend>Groq, OpenRouter or OpenAI</legend>
+    <label for="compatService">Service</label>
+    <select id="compatService" aria-describedby="compat-note">
+      <option value="groq">Groq - very fast, free tier with limits</option>
+      <option value="openrouter">OpenRouter - many models, some free (names ending in :free)</option>
+      <option value="openai">OpenAI - paid per use</option>
+      <option value="custom">Any other AI service - paste its address below</option>
+    </select>
+    <label for="compatKey">API key</label>
+    <input type="password" id="compatKey" autocomplete="off">
+    <label for="compatModel">Model</label>
+    <input type="text" id="compatModel" aria-describedby="compat-note">
+    <label for="compatUrl">Service address (for "Any other AI service")</label>
+    <input type="text" id="compatUrl">
+    <p class="note" id="compat-note">Pick a model that can see images, or WebSight answers from the page text alone. Press Test connection to list the models your key can use. Free tiers have limits and may use what you send to improve their models; check each service's terms before using it on personal pages. Keys: <a href="https://console.groq.com/keys" target="_blank">Groq</a>, <a href="https://openrouter.ai/keys" target="_blank">OpenRouter</a>, <a href="https://platform.openai.com/api-keys" target="_blank">OpenAI</a>. Stored only on this computer.</p>
+  </fieldset>
+
+  <fieldset>
+    <legend>Claude</legend>
+    <label for="claudeKey">Claude API key</label>
+    <input type="password" id="claudeKey" autocomplete="off" aria-describedby="claude-note">
+    <label for="claudeModel">Claude model</label>
+    <input type="text" id="claudeModel" aria-describedby="claude-note">
+    <p class="note" id="claude-note">Key from <a href="https://platform.claude.com" target="_blank">platform.claude.com</a>, paid per use. Default: claude-opus-5-5, the most capable ($4 per million words in). claude-haiku-5-5 is far cheaper ($0.10 per million in, $0.50 out) and fine for most pages. Stored only on this computer.</p>
   </fieldset>
 
   <fieldset>

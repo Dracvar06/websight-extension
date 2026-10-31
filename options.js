@@ -1,6 +1,8 @@
 import { listModels } from './lib/gemini.js';
 import { listDeepSeekModels } from './lib/deepseek.js';
 import { listOllamaModels } from './lib/ollama.js';
+import { listClaudeModels } from './lib/claude.js';
+import { listCompatModels } from './lib/openai-compat.js';
 
 const DEFAULTS = {
   provider: 'gemini',
@@ -21,13 +23,19 @@ const DEFAULTS = {
   whisperKey: '',
   whisperModel: 'deepdml/faster-whisper-large-v3-turbo-ct2',
   aboutMe: '',
+  claudeKey: '',
+  claudeModel: 'claude-opus-5-5',
+  compatService: 'groq',
+  compatUrl: '',
+  compatKey: '',
+  compatModel: '',
   searchEngine: 'searxng',
   searchUrl: 'http://localhost:8888',
   searchKey: '',
 };
 
 const el = {};
-for (const id of ['provider', 'geminiKey', 'geminiModel', 'deepseekKey', 'deepseekModel', 'ollamaUrl', 'ollamaModel', 'rate', 'voiceName', 'ttsEngine', 'ttsUrl', 'speechEngine', 'speechLang', 'whisperUrl', 'whisperKey', 'whisperModel', 'aboutMe', 'searchEngine', 'searchUrl', 'searchKey']) {
+for (const id of ['provider', 'geminiKey', 'geminiModel', 'deepseekKey', 'deepseekModel', 'ollamaUrl', 'ollamaModel', 'rate', 'voiceName', 'ttsEngine', 'ttsUrl', 'speechEngine', 'speechLang', 'whisperUrl', 'whisperKey', 'whisperModel', 'aboutMe', 'searchEngine', 'searchUrl', 'searchKey', 'claudeKey', 'claudeModel', 'compatService', 'compatUrl', 'compatKey', 'compatModel']) {
   el[id] = document.getElementById(id);
 }
 const rateValueEl = document.getElementById('rate-value');
@@ -91,6 +99,12 @@ function save() {
       whisperKey: el.whisperKey.value.trim(),
       whisperModel: el.whisperModel.value.trim() || DEFAULTS.whisperModel,
       aboutMe: el.aboutMe.value.trim().slice(0, 2000),
+      claudeKey: el.claudeKey.value.trim(),
+      claudeModel: el.claudeModel.value.trim() || DEFAULTS.claudeModel,
+      compatService: el.compatService.value,
+      compatUrl: el.compatUrl.value.trim(),
+      compatKey: el.compatKey.value.trim(),
+      compatModel: el.compatModel.value.trim(),
       searchEngine: el.searchEngine.value,
       searchUrl: el.searchUrl.value.trim() || DEFAULTS.searchUrl,
       searchKey: el.searchKey.value.trim(),
@@ -109,7 +123,7 @@ el.rate.addEventListener('input', () => {
 
 document.getElementById('toggle-keys').addEventListener('click', (e) => {
   const showing = el.geminiKey.type === 'text';
-  el.geminiKey.type = el.deepseekKey.type = el.whisperKey.type = el.searchKey.type = showing ? 'password' : 'text';
+  el.geminiKey.type = el.deepseekKey.type = el.whisperKey.type = el.searchKey.type = el.claudeKey.type = el.compatKey.type = showing ? 'password' : 'text';
   e.target.textContent = showing ? 'Show keys' : 'Hide keys';
 });
 
@@ -133,6 +147,16 @@ document.getElementById('test-connection').addEventListener('click', async () =>
   if (provider === 'ollama') {
     wanted = el.ollamaModel.value.trim() || DEFAULTS.ollamaModel;
     fetchModels = () => listOllamaModels(el.ollamaUrl.value.trim() || DEFAULTS.ollamaUrl);
+  } else if (provider === 'claude' || provider === 'compat') {
+    const key = (provider === 'claude' ? el.claudeKey.value : el.compatKey.value).trim();
+    if (!key && !(provider === 'compat' && el.compatService.value === 'custom')) {
+      testStatusEl.textContent = 'No API key entered yet.';
+      testStatusEl.className = 'bad';
+      return;
+    }
+    wanted = provider === 'claude' ? el.claudeModel.value.trim() || DEFAULTS.claudeModel : el.compatModel.value.trim();
+    fetchModels = () =>
+      provider === 'claude' ? listClaudeModels(key) : listCompatModels(el.compatService.value, el.compatUrl.value.trim(), key);
   } else {
     const key = (provider === 'deepseek' ? el.deepseekKey.value : el.geminiKey.value).trim();
     if (!key) {
@@ -146,7 +170,10 @@ document.getElementById('test-connection').addEventListener('click', async () =>
   testStatusEl.textContent = 'Testing...';
   try {
     const models = await fetchModels();
-    if (models.includes(wanted)) {
+    if (!wanted) {
+      testStatusEl.textContent = `Connected. Now type a model in the Model field. Some available: ${models.filter((m) => /vision|vl|scout|maverick|gemma|:free|mini|4o|gpt/i.test(m)).slice(0, 8).join(', ') || models.slice(0, 8).join(', ')}`;
+      testStatusEl.className = 'bad';
+    } else if (models.includes(wanted)) {
       testStatusEl.textContent = `Connected. The model ${wanted} is available. You are good to go.`;
       testStatusEl.className = 'ok';
     } else if (provider === 'ollama') {
@@ -155,7 +182,7 @@ document.getElementById('test-connection').addEventListener('click', async () =>
         : `Ollama is running but has no models. In the terminal run: ollama pull ${wanted}`;
       testStatusEl.className = 'bad';
     } else {
-      const suggestions = models.filter((m) => /flash|chat|v4/i.test(m)).slice(0, 5);
+      const suggestions = models.filter((m) => /flash|chat|v4|haiku|vision|vl|scout|maverick|gemma|:free|mini/i.test(m)).slice(0, 8);
       testStatusEl.textContent = `The key works, but the model ${wanted} is NOT available. Try one of: ${suggestions.join(', ') || models.slice(0, 5).join(', ')}`;
       testStatusEl.className = 'bad';
     }
