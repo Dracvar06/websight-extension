@@ -101,6 +101,20 @@
       syntheticClick(el);
       return { ok: true, detail: `Opened ${name}.` };
     }
+    if (action.type === 'search') {
+      // Type into the field, then send it the way a person would: the
+      // form's own submit (so its scripts run), or Enter.
+      el.focus();
+      const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+      if (setter) setter.call(el, action.value ?? '');
+      else el.value = action.value ?? '';
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      if (el.form && el.form.requestSubmit) el.form.requestSubmit();
+      else pressEnter(el);
+      return { ok: true, detail: `Searched for ${action.value}.` };
+    }
     if (action.type === 'fill') {
       el.focus();
       const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;

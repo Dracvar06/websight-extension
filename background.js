@@ -141,6 +141,7 @@ function hasChoices(elements) {
 // The page text as lines, for telling what a click made appear.
 const pageLines = (text) => (text.split('PAGE TEXT:')[1] || text).split('\n').map((l) => l.trim()).filter((l) => l.length > 3);
 
+const SEARCH_COMMAND = /^(?:please\s+)?(?:search|look up|busca|cerca)\s+(?:on\s+)?(?:this site|the site|this page|here|aquí|aqu[ií])?\s*(?:for|per|por)?\s*(.+?)[.?!]*$/i;
 const PROMISES = /\b(I'?ll|I will|let me|I am going to|I'?m going to|I can)\s+(click|press|open|take you|look|go|check|find|search|navigate)\b/i;
 const CONFIRM_WORDS = /^\s*(yes|yeah|yep|sure|confirm|do it|go ahead|sí|si|vale|oui|ja|okay|ok|sim|da)\b/i;
 
@@ -655,13 +656,22 @@ async function handleAsk(question) {
 
   let result;
   let fallbackNote = '';
+  // "Search this site for X": nothing to interpret, so no model. The
+  // page's own search box is used, as a person would.
+  const searchFor = question.trim().match(SEARCH_COMMAND);
+  const searchBox = searchFor && (extraction.elements.find((e) => e.search && !e.hidden) || extraction.elements.find((e) => e.search));
   try {
-    result = await provider.ask({
-      history: state.history,
-      question,
-      pageText: extraction.pageText,
-      screenshotBase64,
-    });
+    if (searchBox) {
+      result = { answer: '', lang: '', action: { type: 'search', index: searchBox.index, value: searchFor[1].trim() } };
+      trace('search command ->', searchBox.name, JSON.stringify(searchFor[1]));
+    } else {
+      result = await provider.ask({
+        history: state.history,
+        question,
+        pageText: extraction.pageText,
+        screenshotBase64,
+      });
+    }
   } catch (err) {
     // Quota exhausted or service overloaded: quietly try the backup
     // providers so the user is never stranded mid-day.
@@ -1119,6 +1129,11 @@ const ACTS_BY_ADDRESS = /log ?out|sign ?out|unsubscribe|delete|remove|cancel|dea
 
 async function assessRisk(action, target, provider, pageText) {
   if (!target || ['scroll', 'back', 'reveal', 'explore'].includes(action.type)) return { level: 'safe' };
+  if (action.type === 'search') {
+    if (target.sensitive) return { level: 'refuse', why: 'I do not type passwords or card numbers. Please type that yourself.' };
+    // A search box is free to use; any other field would send its form.
+    return target.search || target.searchForm ? { level: 'safe' } : { level: 'ask', why: 'would type this and send the form' };
+  }
   if (action.type === 'fill' || action.type === 'focus') {
     if (target.sensitive && action.type === 'fill') {
       return { level: 'refuse', why: `I do not type ${target.sensitive === 'card' ? 'card numbers' : 'passwords'}. I have not touched that field; please type it yourself.` };
@@ -1156,7 +1171,7 @@ const RISK_SCHEMA = {
 };
 
 function verbFor(action) {
-  return { click: 'press', focus: 'move to', fill: 'type into', back: 'go back' }[action.type] || action.type;
+  return { click: 'press', focus: 'move to', fill: 'type into', back: 'go back', search: 'search with' }[action.type] || action.type;
 }
 
 function earcon(kind) {
@@ -1218,7 +1233,13 @@ async function performAction(tab, action, settings, state) {
 
   const name = action.name || 'that';
   earcon('working');
-  say(action.type === 'back' ? 'Going back.' : `${verbFor(action)[0].toUpperCase()}${verbFor(action).slice(1)} "${name}".`);
+  say(
+    action.type === 'back'
+      ? 'Going back.'
+      : action.type === 'search'
+      ? `Searching for "${action.value}".`
+      : `${verbFor(action)[0].toUpperCase()}${verbFor(action).slice(1)} "${name}".`
+  );
   const before = await snapshot(tab.id);
   let outcome;
   try {
