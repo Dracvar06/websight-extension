@@ -30,6 +30,7 @@ function trace(...args) {
   if (globalThis.WEBSIGHT_TRACE) console.log('[websight]', ...args);
 }
 
+const PROMISES = /\b(I'?ll|I will|let me|I am going to|I'?m going to|I can)\s+(click|press|open|take you|look|go|check|find|search|navigate)\b/i;
 const CONFIRM_WORDS = /^\s*(yes|yeah|yep|sure|confirm|do it|go ahead|sí|si|vale|oui|ja|okay|ok|sim|da)\b/i;
 
 async function getSettings() {
@@ -483,7 +484,22 @@ async function handleAsk(question) {
   let hops = 0;
   let foundOn = '';
   let answeredThere = false;
-  if (result && !result.action && NOT_HERE.test(result.answer)) {
+  if (result && !result.action && PROMISES.test(result.answer) && !IS_QUESTION.test(question.trim())) {
+    // "I will click Sign in" with no action: nothing would happen and
+    // nothing would be said. Asked once more, plainly.
+    const again = await provider
+      .ask({
+        history: state.history,
+        question: `${question}\n\n(Note from the app: you said you would do this but returned no action. Return the action now, or action null and say plainly that you cannot.)`,
+        pageText: extraction.pageText,
+        screenshotBase64: '',
+      })
+      .catch(() => null);
+    trace('promised without acting; asked again ->', JSON.stringify(again && again.action));
+    result = again && again.action ? again : { answer: 'I could not find a way to do that on this page.', lang: result.lang, action: null };
+  }
+  const firstAnswer = result;
+  if (result && !result.action && (NOT_HERE.test(result.answer) || PROMISES.test(result.answer))) {
     // "I don't see that here, I can look if you like": a small model offers
     // instead of looking far more often than it picks a link. Asking it only
     // which link to try is a narrow choice it makes well.
@@ -500,8 +516,15 @@ async function handleAsk(question) {
   }
   while (result && result.action && result.action.type === 'explore') {
     const link = extraction.elements.find((e) => e.index === result.action.index);
-    if (hops >= 2 || !link || link.role !== 'link' || DANGEROUS.test(link.name)) {
-      result = { answer: hops ? `I looked, but I could not find that. You are now on the page "${foundOn}"; say "go back" to return.` : 'I could not find a link here that leads to that.', lang: result.lang, action: null };
+    const leadsElsewhere = link && link.href && sansHash(link.href) !== sansHash((await chrome.tabs.get(tab.id)).url);
+    if (hops >= 2 || !link || !leadsElsewhere || DANGEROUS.test(link.name)) {
+      // Nowhere sensible to look: keep the model's own first answer ("I
+      // don't see any reviews") unless it only offered to look.
+      result = hops
+        ? { answer: `I looked, but I could not find that. You are now on the page "${foundOn}"; say "go back" to return.`, lang: result.lang, action: null }
+        : firstAnswer && !firstAnswer.action && !PROMISES.test(firstAnswer.answer)
+        ? firstAnswer
+        : { answer: 'I could not find that on this page, and no link here looks like it leads to it.', lang: result.lang, action: null };
       answeredThere = false;
       break;
     }
@@ -517,9 +540,7 @@ async function handleAsk(question) {
     } else {
       await messageTab(tab.id, { type: 'websight-action', action: { type: 'click', index: link.index } }).catch(() => null);
     }
-    await sleep(1200);
-    const moved = await snapshot(tab.id);
-    if (moved && before && moved.url === before.url) {
+    if (!(await waitForNavigation(tab.id, before ? before.url : tab.url))) {
       result = { answer: `I opened "${link.name}", but it stayed on this page, so I could not look there.`, lang: result.lang, action: null };
       answeredThere = false;
       break;
@@ -552,6 +573,13 @@ async function handleAsk(question) {
   if (answeredThere && !result.action) {
     // Where it was found is said by the app, not left to the model.
     result.answer = `On the page "${foundOn}": ${result.answer}`;
+  } else if (hops && !result.action) {
+    // Looking moved them somewhere and did not end with an answer: they
+    // must still know where they are now.
+    const now = await chrome.tabs.get(tab.id).catch(() => null);
+    if (now && sansHash(now.url) !== sansHash(tab.url)) {
+      result.answer += ` You are now on the page "${now.title || now.url}". Say "go back" to return.`;
+    }
   }
 
   // Keep history light: text only, no screenshots, last 8 exchanges.
@@ -603,6 +631,23 @@ async function snapshot(tabId) {
   } catch {
     return null; // the page is unloading: a navigation started
   }
+}
+
+const sansHash = (u) => (u || '').split('#')[0];
+
+// Whether the tab starts going to another page within `timeout`. A fixed
+// wait missed pages that began loading late: a click that moved the person
+// to "Theater & Dance" was reported as "nothing changed".
+async function waitForNavigation(tabId, fromUrl, timeout = 3000) {
+  const end = Date.now() + timeout;
+  while (Date.now() < end) {
+    await sleep(200);
+    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    if (!tab) return false;
+    if (tab.pendingUrl && sansHash(tab.pendingUrl) !== sansHash(fromUrl)) return true;
+    if (sansHash(tab.url) !== sansHash(fromUrl)) return true;
+  }
+  return false;
 }
 
 async function waitForLoad(tabId, timeout = 15000) {
@@ -658,10 +703,10 @@ async function performAction(tab, action, settings, state) {
     return { answer: spoken, actionResult: outcome };
   }
 
-  await sleep(1200);
-  let after = await snapshot(tab.id);
+  const navigated = await waitForNavigation(tab.id, before ? before.url : tab.url);
+  let after = navigated ? null : await snapshot(tab.id);
   let spoken;
-  if (!after || (before && after.url !== before.url)) {
+  if (navigated || !after || (before && sansHash(after.url) !== sansHash(before.url))) {
     // A new page: wait for it, then name it. Its description follows.
     const loaded = await waitForLoad(tab.id);
     after = await snapshot(tab.id);

@@ -167,8 +167,15 @@ async function main() {
         // it does for a person; what was said is still in the speech log.
         let answer = await waitForAnswer(popup, before).catch(() => '(popup closed)');
         const seconds = (Date.now() - t0) / 1000;
-        await sleep(1500);
-        const said = (await spoken()).filter((x) => x.t >= t0).map((x) => x.text);
+        // Keep listening until it has been quiet for 8 s: looking on another
+        // page closes the popup long before the answer is spoken.
+        let said = [];
+        for (let quietSince = Date.now(); Date.now() - quietSince < 8000 && Date.now() - t0 < ANSWER_TIMEOUT; ) {
+          await sleep(500);
+          const now = (await spoken()).filter((x) => x.t >= t0).map((x) => x.text);
+          if (now.length !== said.length) quietSince = Date.now();
+          said = now;
+        }
         if (answer === '(popup closed)') answer = said.join(' ');
         await popup.close().catch(() => {});
         await sleep(3000); // a click may be loading a new page
