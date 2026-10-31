@@ -5,7 +5,7 @@ import { listOllamaModels } from './lib/ollama.js';
 const DEFAULTS = {
   provider: 'gemini',
   geminiKey: '',
-  geminiModel: 'gemini-3.5-flash',
+  geminiModel: 'gemini-3.8-flash',
   deepseekKey: '',
   deepseekModel: 'deepseek-v4-flash',
   ollamaUrl: 'http://localhost:11434',
@@ -62,8 +62,8 @@ async function load() {
   // Migrate from the single-provider settings of v0.1.
   if (!s.geminiKey && stored.apiKey) s.geminiKey = stored.apiKey;
   if (stored.model && !stored.geminiModel) s.geminiModel = stored.model;
-  // gemini-2.5-flash (the old default) is closed to new accounts; upgrade it.
-  if (s.geminiModel === 'gemini-2.5-flash') s.geminiModel = 'gemini-3.5-flash';
+  // Older defaults (2.5 is closed to new accounts, 3.5 is a generation behind) move to the current Flash.
+  if (/^gemini-(2\.5|3\.5)-flash$/.test(s.geminiModel)) s.geminiModel = 'gemini-3.8-flash';
   for (const id of Object.keys(el)) el[id].value = s[id];
   document.getElementById('autoDescribe').checked = Boolean(s.autoDescribe);
   rateValueEl.textContent = Number(s.rate).toFixed(1) + 'x';

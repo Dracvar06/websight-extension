@@ -10,7 +10,7 @@ import { searchRequest, parseResults, onSite, sitemapEntries, rankUrls, splitNam
 const DEFAULT_SETTINGS = {
   provider: 'gemini',
   geminiKey: '',
-  geminiModel: 'gemini-3.5-flash',
+  geminiModel: 'gemini-3.8-flash',
   deepseekKey: '',
   deepseekModel: 'deepseek-v4-flash',
   ollamaUrl: 'http://localhost:11434',
@@ -158,8 +158,8 @@ async function getSettings() {
   // Migrate from the single-provider settings of v0.1.
   if (!settings.geminiKey && stored.apiKey) settings.geminiKey = stored.apiKey;
   if (stored.model && !stored.geminiModel) settings.geminiModel = stored.model;
-  // gemini-2.5-flash (the old default) is closed to new accounts; upgrade it.
-  if (settings.geminiModel === 'gemini-2.5-flash') settings.geminiModel = 'gemini-3.5-flash';
+  // Older defaults (2.5 is closed to new accounts, 3.5 is a generation behind) move to the current Flash.
+  if (/^gemini-(2\.5|3\.5)-flash$/.test(settings.geminiModel)) settings.geminiModel = 'gemini-3.8-flash';
   return settings;
 }
 

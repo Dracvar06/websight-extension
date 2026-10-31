@@ -9,7 +9,7 @@ voice out, and it can click, focus or fill things when you ask.
 1. Pick an AI provider:
    - **Gemini** (sees screenshots): https://aistudio.google.com/apikey -
      free tier, about 15 questions per minute and 1,500 per day, no card.
-     New accounts must use gemini-3.5-flash or newer (older model names are
+     New accounts must use gemini-3.8-flash (the current Flash) or newer (older model names are
      closed to them).
    - **DeepSeek** (text only, cannot see images): https://platform.deepseek.com/api_keys -
      one-time 5 million token free grant for new accounts, no card.
