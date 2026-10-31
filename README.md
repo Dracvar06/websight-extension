@@ -189,7 +189,7 @@ Every answer was checked by hand against the page it came from.
 | UChicago admissions (apply, deadlines, tuition) | 5 | 5 | 0 | 5–23 s |
 | UChicago deadlines, three plans with shared dates | 3 | 3, focus on the right plan | 0 | 5 s |
 | UCSB facts one link away (Nobel laureates, enrolment) | 2 | 2, taken to the line | 0 | 7–10 s |
-| UCSB academic calendar, finals, chancellor | 8 | 2 | 0 | 5–23 s |
+| UCSB academic calendar, finals, chancellor | 8 | 1 | 0 | 5–23 s |
 | Arrival descriptions | 6 | 6 | 0 | 7–13 s |
 
 The weak spot is the UCSB academic calendar: the model keeps choosing the
