@@ -75,6 +75,13 @@ async function load() {
   for (const id of Object.keys(el)) el[id].value = s[id];
   document.getElementById('autoDescribe').checked = Boolean(s.autoDescribe);
   rateValueEl.textContent = Number(s.rate).toFixed(1) + 'x';
+  showChosenProvider();
+}
+
+// Only the chosen AI's box is shown, so the page stays short.
+function showChosenProvider() {
+  for (const box of document.querySelectorAll('[data-provider]')) box.hidden = box.dataset.provider !== el.provider.value;
+  testStatusEl.textContent = '';
 }
 
 function save() {
@@ -115,6 +122,7 @@ function save() {
 }
 
 for (const id of Object.keys(el)) el[id].addEventListener('input', save);
+el.provider.addEventListener('change', showChosenProvider);
 document.getElementById('autoDescribe').addEventListener('change', save);
 
 el.rate.addEventListener('input', () => {

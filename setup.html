@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Setting up WebSight</title>
+  <style>
+    body {
+      max-width: 680px;
+      margin: 0 auto;
+      padding: 24px 16px 64px;
+      font-family: system-ui, sans-serif;
+      font-size: 17px;
+      line-height: 1.6;
+      color: #111;
+    }
+    h1 { font-size: 28px; margin-bottom: 4px; }
+    h2 { font-size: 21px; margin-top: 40px; padding-top: 16px; border-top: 1px solid #ccc; }
+    h3 { font-size: 18px; margin-top: 24px; }
+    li { margin: 6px 0; }
+    code, kbd { font-family: ui-monospace, Menlo, monospace; font-size: 15px; background: #f1f1f1; border: 1px solid #ddd; border-radius: 4px; padding: 1px 5px; }
+    pre { background: #f1f1f1; border: 1px solid #ddd; border-radius: 6px; padding: 10px 12px; overflow-x: auto; font-size: 15px; }
+    .box { border: 2px solid #36c; border-radius: 8px; padding: 10px 14px; margin: 16px 0; background: #f4f7ff; }
+    .warn { border-color: #b60; background: #fff8ee; }
+    a:focus-visible { outline: 3px solid #36c; outline-offset: 2px; }
+  </style>
+</head>
+<body>
+  <h1>Setting up WebSight</h1>
+  <p>For the sighted friend helping with the setup. It takes about 30 to 45 minutes, most of it waiting for downloads. Once it is done, the blind person uses WebSight entirely by voice and keyboard.</p>
+
+  <div class="box">
+    <strong>What WebSight is:</strong> a Chrome extension. Press <kbd>Option</kbd> + <kbd>Shift</kbd> + <kbd>S</kbd> (<kbd>Alt</kbd> + <kbd>Shift</kbd> + <kbd>S</kbd> on Windows), speak, and an AI looks at the page and answers out loud: what the page is, where things are, what a date or price is. It can also click, open menus, search a site and take you to websites. It always puts the screen reader on the line its answer came from, so the person can check it.
+  </div>
+
+  <h2>What you need</h2>
+  <ul>
+    <li>A Mac with Apple silicon (M1 or newer). 16 GB of memory or more if you want the free, private AI that runs on the computer itself.</li>
+    <li>Google Chrome.</li>
+    <li>The WebSight folder on the computer.</li>
+    <li>About 15 GB of free disk space for the local helpers (optional, but recommended).</li>
+  </ul>
+
+  <h2>Step 1. Add WebSight to Chrome</h2>
+  <ol>
+    <li>In Chrome, open <code>chrome://extensions</code> (type it in the address bar).</li>
+    <li>Turn on <strong>Developer mode</strong>, top right.</li>
+    <li>Click <strong>Load unpacked</strong> and choose the WebSight folder.</li>
+    <li>Click the puzzle-piece icon to the right of the address bar and pin WebSight, so its icon is always there.</li>
+    <li>Open <code>chrome://extensions/shortcuts</code> and check that WebSight's "Talk" shortcut shows <kbd>Option</kbd> + <kbd>Shift</kbd> + <kbd>S</kbd>. If the box is empty, click it and press those keys. (Chrome leaves it empty when another extension already uses them.)</li>
+  </ol>
+  <p>After any update to the WebSight folder, come back to <code>chrome://extensions</code> and press WebSight's reload arrow.</p>
+
+  <h2>Step 2. Install the free helpers on the computer</h2>
+  <p>These run only on this computer and cost nothing:</p>
+  <ul>
+    <li><strong>Voice server:</strong> understands speech in any language and speaks with natural voices. Without it, WebSight uses Chrome's speech recognition (which sends the voice to Google) and the Mac's built-in voices.</li>
+    <li><strong>Search engine:</strong> lets "take me to the admissions page" find the right page directly. Without it, WebSight uses the site's own list of pages, which works on fewer sites.</li>
+    <li><strong>Local AI</strong> (Ollama): a free, private AI that answers when the cloud AI is busy, or all the time if you prefer.</li>
+  </ul>
+  <ol>
+    <li>Install Homebrew if the Mac does not have it: follow the one-line instruction at <a href="https://brew.sh" target="_blank">brew.sh</a>.</li>
+    <li>For the local AI, install the Ollama app from <a href="https://ollama.com" target="_blank">ollama.com</a> and open it once.</li>
+    <li>Open the Terminal app, go to the WebSight folder and run the setup script. If the folder is in Projects, for example:
+      <pre>cd ~/Projects/websight-extension
+./setup-local-servers.sh</pre>
+      It downloads about 10 GB the first time (the speech model and the local AI are the large parts), so give it time. It can be run again safely: anything already installed is skipped. When it finishes, both servers start by themselves every time the Mac starts.</li>
+  </ol>
+
+  <h2>Step 3. Choose the AI</h2>
+  <p>Right-click the WebSight icon and choose <strong>Options</strong>. Section 1 of the settings page, "The AI that reads pages for you", is where this goes. Choose one:</p>
+
+  <h3>Option A (recommended): Gemini, paid by a Google AI Pro plan</h3>
+  <p>Fast, sees the screen, and reliable. Google's free tier is often too busy, so this uses the paid tier, which a Google AI Pro subscription's monthly Cloud credit can cover.</p>
+  <ol>
+    <li>Create a key at <a href="https://aistudio.google.com/apikey" target="_blank">Google AI Studio</a> (Create API key). Copy it.</li>
+    <li>In WebSight's settings, choose <strong>Gemini</strong>, paste the key, and press <strong>Test connection</strong>.</li>
+    <li>To move the key off the free tier: open the <a href="https://developers.google.com/profile" target="_blank">Google Developer Program profile</a> with the same Google account that has the AI Pro plan, create a profile if asked, then open <strong>Benefits</strong> and activate the monthly Google Cloud credit. It asks for a Cloud billing account; create one if needed.</li>
+    <li>In the <a href="https://console.cloud.google.com/billing" target="_blank">Google Cloud billing page</a>, set a <strong>budget alert</strong> (for example 10 dollars a month), so any cost beyond the credit is noticed at once.</li>
+    <li>Back in AI Studio, on the API keys page, click <strong>Set up billing</strong> next to the key and choose that billing account. The key's tier should change from "Free tier" to a paid tier.</li>
+  </ol>
+  <div class="box warn">Do not paste the key anywhere except WebSight's settings. It stays on this computer. On the free tier, Google may use what WebSight sends (the text of the pages) to improve its products; on the paid tier it does not.</div>
+
+  <h3>Option B: completely free and private</h3>
+  <p>Choose <strong>Ollama</strong>. Nothing leaves the computer. Answers take 5 to 20 seconds instead of 2 to 5, and it is less good at finding its way around complicated sites.</p>
+
+  <h3>Option C: another service</h3>
+  <p>Choose <strong>Groq, OpenRouter, OpenAI or any other service</strong> (some have free tiers with limits), or <strong>Claude</strong> (very reliable, paid per use). Paste the key, press Test connection, and type one of the models it lists, choosing one that can see images. "Any other AI service" accepts almost any provider: paste its address, which usually ends in <code>/v1</code>.</p>
+
+  <h2>Step 4. The rest of the settings</h2>
+  <ol>
+    <li><strong>About you</strong> (section 2): write a few lines about the person, for example "I am a blind student at UCSB. I use VoiceOver. I often use Técnico Lisboa's website. I speak English, Catalan and Spanish." It helps WebSight guess right and hear names right.</li>
+    <li><strong>Listening</strong> (section 3): press <strong>Enable microphone</strong> and allow it. If the person always speaks one language, choose it.</li>
+    <li><strong>Voice</strong> (section 4): set the speaking speed (screen reader users often like 2x or more) and press <strong>Test voice</strong>.</li>
+    <li><strong>Finding pages</strong> (section 5): leave SearXNG chosen and press <strong>Test search</strong>. It should name a UCSB admissions page.</li>
+  </ol>
+
+  <h2>Step 5. Try it together</h2>
+  <p>Open any website, press <kbd>Option</kbd> + <kbd>Shift</kbd> + <kbd>S</kbd>, wait for the beep, speak, then press <kbd>Enter</kbd>. Pauses are fine; it waits for Enter. Try:</p>
+  <ul>
+    <li>"What is this page?"</li>
+    <li>"When is the application deadline?" (it answers and puts the screen reader on that line)</li>
+    <li>"Take me to the admissions page."</li>
+    <li>On a new tab: "Take me to the UChicago website." (it only goes to official sites, and asks first if unsure)</li>
+    <li>"Search this site for parking."</li>
+    <li>"Remember that I am a physics major."</li>
+    <li>"Click Buy now." (anything that buys, sends, deletes or submits is read back first, and only happens after a "yes")</li>
+  </ul>
+  <p><kbd>Option</kbd> + <kbd>Shift</kbd> + <kbd>N</kbd> starts a fresh conversation on the current page.</p>
+
+  <h2>If something goes wrong</h2>
+  <ul>
+    <li><strong>The shortcut does nothing:</strong> see the last point of Step 1.</li>
+    <li><strong>"Busy" or "at its limit":</strong> the cloud AI is overloaded; the local AI answers instead if Ollama is running. If it happens a lot with Gemini, the key is probably still on the free tier (Step 3, Option A).</li>
+    <li><strong>It mishears:</strong> choose the language in section 3, and add names it gets wrong to About you.</li>
+    <li><strong>"Chrome does not let extensions read" a page:</strong> Chrome's own pages (new tab, settings, the Web Store) are closed to all extensions. Say a website to go to instead.</li>
+    <li><strong>No voice, or a robotic voice:</strong> the voice server is not running. Run the setup script from Step 2 again.</li>
+    <li><strong>Check everything at once:</strong> on the settings page, press Test connection, Test search and Test voice.</li>
+  </ul>
+</body>
+</html>

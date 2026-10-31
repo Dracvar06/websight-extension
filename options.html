@@ -5,21 +5,26 @@
   <title>WebSight Settings</title>
   <style>
     body {
-      max-width: 560px;
+      max-width: 600px;
       margin: 0 auto;
-      padding: 24px 16px;
+      padding: 24px 16px 48px;
       font-family: system-ui, sans-serif;
       font-size: 16px;
       line-height: 1.5;
     }
-    h1 { font-size: 22px; }
-    fieldset { border: 1px solid #bbb; border-radius: 8px; margin-bottom: 20px; padding: 12px 16px; }
+    h1 { font-size: 24px; margin-bottom: 4px; }
+    h2 { font-size: 19px; margin: 32px 0 6px; padding-top: 16px; border-top: 1px solid #ccc; }
+    .lead { margin-top: 0; }
+    .guide { display: inline-block; font-weight: 600; padding: 8px 12px; border: 2px solid #36c; border-radius: 8px; color: #24a; text-decoration: none; }
+    fieldset { border: 1px solid #bbb; border-radius: 8px; margin: 12px 0; padding: 12px 16px; }
+    fieldset[hidden] { display: none; }
     legend { font-weight: 700; padding: 0 6px; }
     label { display: block; font-weight: 600; margin: 10px 0 4px; }
-    input[type="password"], input[type="text"], select {
+    input[type="password"], input[type="text"], select, textarea {
       width: 100%;
       padding: 8px;
       font-size: 16px;
+      font-family: inherit;
       border: 1px solid #888;
       border-radius: 6px;
       box-sizing: border-box;
@@ -34,7 +39,9 @@
       cursor: pointer;
       margin: 6px 6px 0 0;
     }
-    button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid #36c; outline-offset: 1px; }
+    details { margin: 12px 0; }
+    summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
+    button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible, a:focus-visible { outline: 3px solid #36c; outline-offset: 1px; }
     #save-status { font-weight: 600; color: #060; min-height: 22px; }
     #test-status { font-weight: 600; min-height: 22px; }
     #test-status.ok { color: #060; }
@@ -44,42 +51,49 @@
 </head>
 <body>
   <h1>WebSight Settings</h1>
+  <p class="lead">Everything saves by itself as you change it.</p>
+  <p><a class="guide" href="setup.html" target="_blank">New here? Open the step-by-step setup guide</a></p>
   <p id="save-status" role="status" aria-live="polite"></p>
 
-  <fieldset>
-    <legend>About me</legend>
-    <label for="aboutMe">A few lines about you, for WebSight to keep in mind</label>
-    <textarea id="aboutMe" rows="4" style="width: 100%" aria-describedby="about-note"></textarea>
-    <p class="note" id="about-note">For example: "I am a blind student at UCSB. I use VoiceOver. I mostly use my university's websites and Gmail." WebSight gives this to the AI with every question, so its guesses fit you (which campus, which language, what "my classes" means). You can also say "remember that..." while talking to it, and it is added here. It stays on this computer, except that a cloud AI provider receives it with each question.</p>
-  </fieldset>
+  <h2>1. The AI that reads pages for you</h2>
+  <label for="provider">Which AI to use</label>
+  <select id="provider" aria-describedby="provider-note">
+    <option value="gemini">Gemini - sees screenshots, free or paid with your Google key</option>
+    <option value="ollama">Ollama - on this computer: free, private, slower</option>
+    <option value="compat">Groq, OpenRouter, OpenAI or any other service</option>
+    <option value="claude">Claude - very reliable, paid per use</option>
+    <option value="deepseek">DeepSeek - cheap, but cannot see screenshots</option>
+  </select>
+  <p class="note" id="provider-note">When a cloud AI is busy or at its limit, Ollama on this computer answers instead, if it is running.</p>
 
-  <fieldset>
-    <legend>AI provider</legend>
-    <label for="provider">Which AI to use</label>
-    <select id="provider">
-      <option value="gemini">Gemini - sees screenshots, free tier with daily limit</option>
-      <option value="deepseek">DeepSeek - text only, 5 million free tokens</option>
-      <option value="ollama">Ollama - local on this computer, unlimited and private</option>
-      <option value="compat">Groq, OpenRouter or OpenAI - sees screenshots, free or paid depending on the service</option>
-      <option value="claude">Claude - sees screenshots, very reliable, paid per use</option>
-    </select>
-    <p class="note">DeepSeek cannot see images or screenshots. Ollama runs entirely on this computer: no quota, no cost, nothing leaves the machine, but answers are slower and need the Ollama app running. When a cloud AI is busy or at its limit, Ollama answers instead, if it is running.</p>
-    <button type="button" id="test-connection">Test connection</button>
-    <p id="test-status" role="status" aria-live="polite"></p>
-  </fieldset>
-
-  <fieldset>
+  <fieldset data-provider="gemini">
     <legend>Gemini</legend>
     <label for="geminiKey">Gemini API key</label>
     <input type="password" id="geminiKey" autocomplete="off" aria-describedby="gemini-note">
-    <p class="note" id="gemini-note">Free key from <a href="https://aistudio.google.com/apikey" target="_blank">Google AI Studio</a>. Free tier: about 15 questions per minute, 1,500 per day. Stored only on this computer.</p>
-    <label for="geminiModel">Gemini model</label>
-    <input type="text" id="geminiModel" aria-describedby="gemini-model-note">
-    <p class="note" id="gemini-model-note">Default: gemini-3.8-flash, the current Flash in AI Studio. Older names may be closed or busier; press Test connection to see what your key can use.</p>
+    <p class="note" id="gemini-note">Key from <a href="https://aistudio.google.com/apikey" target="_blank">Google AI Studio</a>. A new key is on Google's free tier, which is often busy and may use what you send to improve Google's products. With a Google AI Pro plan, its monthly Cloud credit can pay for the faster paid tier (the setup guide shows how). Stored only on this computer.</p>
+    <details>
+      <summary>Advanced: Gemini model</summary>
+      <label for="geminiModel">Gemini model</label>
+      <input type="text" id="geminiModel" aria-describedby="gemini-model-note">
+      <p class="note" id="gemini-model-note">Default: gemini-3.8-flash, the current Flash in AI Studio. Press Test connection to see what your key can use.</p>
+    </details>
   </fieldset>
 
-  <fieldset>
-    <legend>Groq, OpenRouter or OpenAI</legend>
+  <fieldset data-provider="ollama">
+    <legend>Ollama (on this computer)</legend>
+    <label for="ollamaModel">Ollama model</label>
+    <input type="text" id="ollamaModel" aria-describedby="ollama-note">
+    <p class="note" id="ollama-note">Needs the Ollama app running. Default: gemma4:e4b (install once in the Terminal with: ollama pull gemma4:e4b). Nothing leaves this computer.</p>
+    <details>
+      <summary>Advanced: Ollama address</summary>
+      <label for="ollamaUrl">Ollama address</label>
+      <input type="text" id="ollamaUrl">
+      <p class="note">Default: http://localhost:11434</p>
+    </details>
+  </fieldset>
+
+  <fieldset data-provider="compat">
+    <legend>Groq, OpenRouter, OpenAI or any other service</legend>
     <label for="compatService">Service</label>
     <select id="compatService" aria-describedby="compat-note">
       <option value="groq">Groq - very fast, free tier with limits</option>
@@ -91,88 +105,65 @@
     <input type="password" id="compatKey" autocomplete="off">
     <label for="compatModel">Model</label>
     <input type="text" id="compatModel" aria-describedby="compat-note">
-    <label for="compatUrl">Service address (for "Any other AI service")</label>
+    <label for="compatUrl">Service address (only for "Any other AI service")</label>
     <input type="text" id="compatUrl">
-    <p class="note" id="compat-note">Pick a model that can see images, or WebSight answers from the page text alone. Press Test connection to list the models your key can use. Free tiers have limits and may use what you send to improve their models; check each service's terms before using it on personal pages. Keys: <a href="https://console.groq.com/keys" target="_blank">Groq</a>, <a href="https://openrouter.ai/keys" target="_blank">OpenRouter</a>, <a href="https://platform.openai.com/api-keys" target="_blank">OpenAI</a>. Stored only on this computer.</p>
+    <p class="note" id="compat-note">Pick a model that can see images, or WebSight answers from the page text alone. Press Test connection to list the models your key can use. "Any other AI service" works with almost any provider that offers an OpenAI-compatible API (Mistral, xAI, Together, LM Studio and many more): paste its address, ending in /v1. Free tiers have limits and may use what you send to improve their models. Keys: <a href="https://console.groq.com/keys" target="_blank">Groq</a>, <a href="https://openrouter.ai/keys" target="_blank">OpenRouter</a>, <a href="https://platform.openai.com/api-keys" target="_blank">OpenAI</a>. Stored only on this computer.</p>
   </fieldset>
 
-  <fieldset>
+  <fieldset data-provider="claude">
     <legend>Claude</legend>
     <label for="claudeKey">Claude API key</label>
     <input type="password" id="claudeKey" autocomplete="off" aria-describedby="claude-note">
     <label for="claudeModel">Claude model</label>
     <input type="text" id="claudeModel" aria-describedby="claude-note">
-    <p class="note" id="claude-note">Key from <a href="https://platform.claude.com" target="_blank">platform.claude.com</a>, paid per use. Default: claude-opus-5-5, the most capable ($4 per million words in). claude-haiku-5-5 is far cheaper ($0.10 per million in, $0.50 out) and fine for most pages. Stored only on this computer.</p>
+    <p class="note" id="claude-note">Key from <a href="https://platform.claude.com" target="_blank">platform.claude.com</a>, paid per use. Default: claude-opus-5-5, the most capable ($4 per million tokens read). claude-haiku-5-5 costs far less ($0.10 per million read, $0.50 per million written) and handles most pages well. Stored only on this computer.</p>
   </fieldset>
 
-  <fieldset>
+  <fieldset data-provider="deepseek">
     <legend>DeepSeek</legend>
     <label for="deepseekKey">DeepSeek API key</label>
     <input type="password" id="deepseekKey" autocomplete="off" aria-describedby="deepseek-note">
-    <p class="note" id="deepseek-note">Key from <a href="https://platform.deepseek.com/api_keys" target="_blank">platform.deepseek.com</a>. New accounts get a one-time 5 million token free grant, no card needed. Stored only on this computer.</p>
-    <label for="deepseekModel">DeepSeek model</label>
-    <input type="text" id="deepseekModel" aria-describedby="deepseek-model-note">
-    <p class="note" id="deepseek-model-note">Default: deepseek-v4-flash (the older deepseek-chat name is retired as of July 24, 2026)</p>
+    <p class="note" id="deepseek-note">Key from <a href="https://platform.deepseek.com/api_keys" target="_blank">platform.deepseek.com</a>. It cannot see screenshots, and what you send is processed in China. Stored only on this computer.</p>
+    <details>
+      <summary>Advanced: DeepSeek model</summary>
+      <label for="deepseekModel">DeepSeek model</label>
+      <input type="text" id="deepseekModel" aria-describedby="deepseek-model-note">
+      <p class="note" id="deepseek-model-note">Default: deepseek-v4-flash</p>
+    </details>
   </fieldset>
 
-  <fieldset>
-    <legend>Ollama (local)</legend>
-    <label for="ollamaUrl">Ollama address</label>
-    <input type="text" id="ollamaUrl" aria-describedby="ollama-note">
-    <label for="ollamaModel">Ollama model</label>
-    <input type="text" id="ollamaModel" aria-describedby="ollama-note">
-    <p class="note" id="ollama-note">Needs the Ollama app running (default address http://localhost:11434). Pull a vision model once in the terminal, for example: ollama pull gemma4:e4b. Press Test connection to list the models you have installed. The extension identifies itself to Ollama as a local request automatically, so no OLLAMA_ORIGINS setup is needed.</p>
-  </fieldset>
-
-  <fieldset>
-    <legend>Finding pages on a site</legend>
-    <label for="searchEngine">Search engine</label>
-    <select id="searchEngine" aria-describedby="search-note">
-      <option value="searxng">SearXNG on this computer - free, private, no key</option>
-      <option value="tavily">Tavily - free key, 1,000 searches a month</option>
-      <option value="brave">Brave Search - key, about 1,000 searches a month of free credit</option>
-      <option value="sitemap">None - only the site's own list of pages</option>
-    </select>
-    <label for="searchUrl">SearXNG address</label>
-    <input type="text" id="searchUrl">
-    <label for="searchKey">Search key (Tavily or Brave only)</label>
-    <input type="password" id="searchKey" autocomplete="off">
-    <button type="button" id="test-search">Test search</button>
-    <p class="note" id="search-status" role="status"></p>
-    <p class="note" id="search-note">"Take me to the admissions page" and questions whose answer is elsewhere on a site use a search engine, like a chatbot does, instead of clicking through menus. Only pages on the site you are on, or the official site Wikidata names, are ever opened, so a search can never take you to a lookalike. Searches carry only the site and your words, never your pages or accounts. If the engine is not running or has no key, WebSight uses the site's own list of pages (its sitemap), which is free but patchy.</p>
-  </fieldset>
-
+  <button type="button" id="test-connection">Test connection</button>
   <button type="button" id="toggle-keys">Show keys</button>
+  <p id="test-status" role="status" aria-live="polite"></p>
 
-  <fieldset>
-    <legend>Voice</legend>
-    <label for="rate">Speaking speed: <span id="rate-value"></span></label>
-    <input type="range" id="rate" min="0.8" max="3" step="0.1" aria-describedby="rate-note">
-    <button type="button" id="test-voice">Test voice</button>
-    <p class="note" id="rate-note">Many screen reader users prefer 2x or faster.</p>
+  <h2>2. About you</h2>
+  <label for="aboutMe">A few lines about you, for WebSight to keep in mind</label>
+  <textarea id="aboutMe" rows="4" aria-describedby="about-note"></textarea>
+  <p class="note" id="about-note">For example: "I am a blind student at UCSB. I use VoiceOver. I often use Técnico Lisboa's website. I speak English, Catalan and Spanish." WebSight gives this to the AI with every question, so its guesses fit you, and to the speech recognizer, so it spells your names right. You can also say "remember that..." while talking to it. It stays on this computer, except that a cloud AI receives it with each question.</p>
 
-    <label for="ttsEngine">Voice engine</label>
-    <select id="ttsEngine" aria-describedby="tts-note">
-      <option value="system">System voices - instant, quality varies by language</option>
-      <option value="neural">Neural local server - natural in every language, free and private</option>
-    </select>
-    <label for="ttsUrl">Neural voice server address</label>
-    <input type="text" id="ttsUrl">
-    <button type="button" id="test-tts">Test neural voice</button>
-    <p class="note" id="tts-status" role="status" aria-live="polite"></p>
-    <p class="note" id="tts-note">The neural engine uses the local voice server (run-voice-server.sh, started automatically at login). English, Spanish, Catalan, French, Italian, Portuguese, Hindi, Japanese and Chinese sound natural; other languages fall back to system voices automatically.</p>
-
-    <label for="voiceName">Voice for answers (system engine only)</label>
-    <select id="voiceName" aria-describedby="voice-note"></select>
-    <p class="note" id="voice-note">Automatic picks a system voice matching the answer's language, avoiding the low-quality novelty ones. Tip: install nicer system voices under macOS Settings, Accessibility, Spoken Content, then reopen this page.</p>
-
+  <h2>3. Listening</h2>
+  <button type="button" id="mic-button">Enable microphone</button>
+  <p class="note" id="mic-status" role="status" aria-live="polite">Grant microphone access once here so the hotkey can listen right away.</p>
+  <label for="speechLang">Language you speak to it in</label>
+  <select id="speechLang" aria-describedby="lang-note">
+    <option value="auto">Automatic - any language</option>
+    <option value="en-US">English</option>
+    <option value="es-ES">Spanish - espanol</option>
+    <option value="ca-ES">Catalan - catala</option>
+    <option value="it-IT">Italian - italiano</option>
+    <option value="de-DE">German - Deutsch</option>
+    <option value="fr-FR">French - francais</option>
+    <option value="mk-MK">Macedonian - makedonski</option>
+  </select>
+  <p class="note" id="lang-note">If you always speak one language, choosing it helps short commands be heard right. Leave it on automatic if you mix languages.</p>
+  <details>
+    <summary>Advanced: speech recognition</summary>
     <label for="speechEngine">Speech recognition engine</label>
     <select id="speechEngine" aria-describedby="engine-note">
       <option value="whisper">Whisper on this computer - any language, free and private</option>
       <option value="browser">Browser - one language, live transcript, sends your voice to Google</option>
     </select>
-    <p class="note" id="engine-note">Whisper large v3 turbo understands every language and detects which one you speak automatically. By default it uses the local voice server on this computer (free, private, no key). It can also point at any OpenAI-compatible Whisper server, or at Groq's cloud (<a href="https://console.groq.com/keys" target="_blank">free key</a>, address https://api.groq.com/openai/v1). If the configured server does not answer, the local one is used automatically.</p>
-
+    <p class="note" id="engine-note">Whisper runs on the local voice server (free, private, no key) and records until you press Enter, however long you pause. It can also point at another Whisper server, such as Groq's cloud (address https://api.groq.com/openai/v1 with a <a href="https://console.groq.com/keys" target="_blank">free key</a>). If that server does not answer, the local one is used.</p>
     <label for="whisperKey">Whisper API key (only for Groq or another cloud server)</label>
     <input type="password" id="whisperKey" autocomplete="off">
     <label for="whisperUrl">Whisper server address</label>
@@ -182,38 +173,59 @@
     <p class="note" id="whisper-model-note">Local server: deepdml/faster-whisper-large-v3-turbo-ct2. Groq: whisper-large-v3-turbo.</p>
     <button type="button" id="test-whisper">Test Whisper server</button>
     <p class="note" id="whisper-status" role="status" aria-live="polite"></p>
+  </details>
 
-    <label for="speechLang">Language you speak to it in (Browser engine only)</label>
-    <select id="speechLang">
-      <option value="auto">Automatic (browser language)</option>
-      <option value="en-US">English</option>
-      <option value="es-ES">Spanish - espanol</option>
-      <option value="ca-ES">Catalan - catala</option>
-      <option value="it-IT">Italian - italiano</option>
-      <option value="de-DE">German - Deutsch</option>
-      <option value="fr-FR">French - francais</option>
-      <option value="mk-MK">Macedonian - makedonski</option>
-    </select>
+  <h2>4. Voice</h2>
+  <label for="rate">Speaking speed: <span id="rate-value"></span></label>
+  <input type="range" id="rate" min="0.8" max="3" step="0.1" aria-describedby="rate-note">
+  <button type="button" id="test-voice">Test voice</button>
+  <p class="note" id="rate-note">Many screen reader users prefer 2x or faster.</p>
+  <label for="ttsEngine">Voice engine</label>
+  <select id="ttsEngine" aria-describedby="tts-note">
+    <option value="neural">Neural voices on this computer - natural in every language, free and private</option>
+    <option value="system">System voices - instant, quality varies by language</option>
+  </select>
+  <p class="note" id="tts-note">Neural voices sound natural in English, Spanish, Catalan, French, Italian, Portuguese, Hindi, Japanese and Chinese; other languages use system voices automatically.</p>
+  <details>
+    <summary>Advanced: voice server and system voice</summary>
+    <label for="ttsUrl">Neural voice server address</label>
+    <input type="text" id="ttsUrl">
+    <button type="button" id="test-tts">Test neural voice</button>
+    <p class="note" id="tts-status" role="status" aria-live="polite"></p>
+    <label for="voiceName">Voice for answers (system engine only)</label>
+    <select id="voiceName" aria-describedby="voice-note"></select>
+    <p class="note" id="voice-note">Automatic picks a system voice matching the answer's language, avoiding the low-quality novelty ones. Nicer system voices can be installed under macOS Settings, Accessibility, Spoken Content; then reopen this page.</p>
+  </details>
 
-    <label for="mic-button" style="margin-top:14px;">Microphone</label>
-    <button type="button" id="mic-button">Enable microphone</button>
-    <p class="note" id="mic-status" role="status" aria-live="polite">Grant microphone access once here so the hotkey can listen right away.</p>
-  </fieldset>
+  <h2>5. Finding pages on a site</h2>
+  <label for="searchEngine">Search engine</label>
+  <select id="searchEngine" aria-describedby="search-note">
+    <option value="searxng">SearXNG on this computer - free, private, no key</option>
+    <option value="tavily">Tavily - free key, 1,000 searches a month</option>
+    <option value="brave">Brave Search - key, about 1,000 searches a month of free credit</option>
+    <option value="sitemap">None - only the site's own list of pages</option>
+  </select>
+  <button type="button" id="test-search">Test search</button>
+  <p class="note" id="search-status" role="status"></p>
+  <p class="note" id="search-note">"Take me to the admissions page", and questions whose answer is elsewhere on a site, use a search engine instead of clicking through menus. Only pages on the site you are on, or the official site Wikidata names, are ever opened, so a search can never take you to a lookalike. Searches carry only the site and your words. If the engine is not running or has no key, WebSight uses the site's own list of pages (its sitemap).</p>
+  <details>
+    <summary>Advanced: search address and key</summary>
+    <label for="searchUrl">SearXNG address</label>
+    <input type="text" id="searchUrl">
+    <label for="searchKey">Search key (Tavily or Brave only)</label>
+    <input type="password" id="searchKey" autocomplete="off">
+  </details>
 
-  <fieldset>
-    <legend>Behavior</legend>
-    <label for="autoDescribe" style="font-weight:600;">
-      <input type="checkbox" id="autoDescribe" style="width:auto; margin-right:8px;">
-      Describe each page when it loads
-    </label>
-    <p class="note">On every new page you hear a short description: what the page is and the two or three most useful things on it. The AI reads the whole page's text (on a very long page, the parts that match your question), so nothing below the fold is missed. The page is never scrolled.</p>
-  </fieldset>
+  <h2>6. Behaviour</h2>
+  <label for="autoDescribe" style="font-weight:600;">
+    <input type="checkbox" id="autoDescribe" style="width:auto; margin-right:8px;">
+    Describe each page when it loads
+  </label>
+  <p class="note">On every new page you hear a short description: what the page is and the two or three most useful things on it. The page is never scrolled.</p>
 
-  <fieldset>
-    <legend>Keyboard shortcuts</legend>
-    <ul id="shortcut-status" aria-live="polite"></ul>
-    <p class="note">If a shortcut says NOT ASSIGNED, Chrome dropped it (usually a conflict with another extension or the system). Assign it manually: open chrome://extensions/shortcuts, find WebSight, click the empty box and press the keys you want. On Mac, Alt is the Option key.</p>
-  </fieldset>
+  <h2>7. Keyboard shortcuts</h2>
+  <ul id="shortcut-status" aria-live="polite"></ul>
+  <p class="note">If a shortcut says NOT ASSIGNED, Chrome dropped it (usually a conflict with another extension). Assign it at chrome://extensions/shortcuts: find WebSight, click the empty box and press the keys you want. On a Mac, Alt is the Option key.</p>
 
   <script type="module" src="options.js"></script>
 </body>

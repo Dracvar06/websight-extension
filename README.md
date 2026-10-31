@@ -4,7 +4,13 @@ Talk to an AI that sees the current page and describes it, like a sighted friend
 sitting next to you. Built for blind and visually impaired users. Voice in,
 voice out, and it can click, focus or fill things when you ask.
 
-## Setup (about 3 minutes)
+## Setup
+
+The full step-by-step guide for a sighted helper is `setup.html` (it opens
+by itself when WebSight is first added, and Settings links to it). The free
+local helpers (voice server, search engine, local AI model) install with one
+command, `./setup-local-servers.sh`, which is safe to run again. The short
+version:
 
 1. Pick an AI provider:
    - **Gemini** (sees screenshots): https://aistudio.google.com/apikey -

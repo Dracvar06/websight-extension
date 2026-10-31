@@ -1615,6 +1615,12 @@ async function performAction(tab, action, settings, state) {
   return { answer: spoken, actionResult: outcome };
 }
 
+// The setup guide opens once, when WebSight is first added (not in the
+// automated tests, where it would take the place of the page under test).
+chrome.runtime.onInstalled.addListener(({ reason }) => {
+  if (reason === 'install' && !navigator.webdriver) chrome.tabs.create({ url: chrome.runtime.getURL('setup.html') });
+});
+
 // Settings saved by older versions point Whisper at Groq with no key, which
 // cannot work; the local voice server does the same job, free and private.
 chrome.storage.local.get(['speechEngine', 'whisperUrl', 'whisperKey']).then((s) => {
