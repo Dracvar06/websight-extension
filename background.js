@@ -16,6 +16,14 @@ const DEFAULT_SETTINGS = {
   ollamaUrl: 'http://localhost:11434',
   ollamaModel: 'gemma4:e4b',
   rate: 1.4,
+  // Seeing the screen (people with some sight): text size and colours of
+  // the panel, and the answer's line repeated in large text on the page.
+  textSize: 1,
+  colours: 'dark',
+  bigLine: false,
+  // 'voice': WebSight speaks. 'screenreader': answers go to the panel for
+  // the person's own screen reader to read, at its speed and voice.
+  voiceOutput: 'voice',
   speechLang: 'auto',
   voiceName: '',
   autoDescribe: true,
@@ -203,6 +211,13 @@ async function ensureOffscreen() {
 
 async function speak(text, { lang, rate, enqueue = false, voiceName } = {}) {
   const settings = await getSettings();
+  chrome.storage.session.set({ 'websight-last-spoken': { text, lang } }).catch(() => {});
+  if (settings.voiceOutput === 'screenreader') {
+    // Read by their screen reader from the panel; if the panel is closed,
+    // WebSight's own voice says it instead.
+    const shown = await chrome.runtime.sendMessage({ type: 'websight-say', text, lang }).catch(() => null);
+    if (shown && shown.ok) return;
+  }
   if (settings.ttsEngine === 'neural') {
     try {
       await ensureOffscreen();
@@ -374,6 +389,11 @@ chrome.action.onClicked.addListener((tab) => {
 });
 
 chrome.commands.onCommand.addListener(async (command, tab) => {
+  if (['repeat', 'stop', 'slower', 'faster'].includes(command)) {
+    const done = await quickCommand(command);
+    chrome.runtime.sendMessage({ type: 'websight-quick-done', command, answer: done && done.answer }).catch(() => {});
+    return;
+  }
   if (command !== 'new-conversation') return;
   const opening = tab ? chrome.sidePanel.open({ windowId: tab.windowId }).catch(() => null) : Promise.resolve(null);
   chrome.tts.stop();
@@ -1000,7 +1020,43 @@ async function handleAsk(question) {
   }
 }
 
+// Instant controls, no AI needed: by voice ("repeat that", "slower"), by
+// shortcut from the page, or by key in the panel.
+const QUICK = [
+  ['repeat', /^(?:please\s+)?(?:repeat(?:\s+(?:that|it|please))?|say (?:that|it) again|again|what did you say|pardon|sorry what|repeteix(?:-ho)?|torna-ho a dir|repite(?:lo)?|rep[ií]telo|otra vez|una altra vegada)[.!?]*$/i],
+  ['slower', /^(?:please\s+)?(?:(?:speak|talk|read|go)\s+)?(?:slower|more slowly|slow down)(?:\s+please)?[.!]*$|^(?:m[eé]s|m[aá]s)\s+(?:a poc a poc|lent|lento|despacio|poc a poc)[.!]*$/i],
+  ['faster', /^(?:please\s+)?(?:(?:speak|talk|read|go)\s+)?(?:faster|quicker|more quickly|speed up)(?:\s+please)?[.!]*$|^(?:m[eé]s|m[aá]s)\s+(?:r[aà]pid|r[aá]pido|de pressa|deprisa)[.!]*$/i],
+  ['stop', /^(?:please\s+)?(?:stop(?:\s+talking|\s+reading)?|quiet|be quiet|silence|shut up|para|calla|atura'?t?|prou)[.!]*$/i],
+];
+
+async function quickCommand(kind) {
+  const settings = await getSettings();
+  if (kind === 'stop') {
+    chrome.tts.stop();
+    chrome.runtime.sendMessage({ type: 'websight-tts-stop' }).catch(() => {});
+    return { answer: 'Stopped.' };
+  }
+  if (kind === 'repeat') {
+    const { 'websight-last-spoken': last } = await chrome.storage.session.get('websight-last-spoken');
+    const text = (last && last.text) || 'I have not said anything yet.';
+    chrome.tts.stop();
+    speak(text, { lang: last && last.lang, rate: settings.rate, voiceName: settings.voiceName });
+    return { answer: text };
+  }
+  if (kind === 'slower' || kind === 'faster') {
+    const rate = Math.round(Math.min(3, Math.max(0.8, settings.rate + (kind === 'faster' ? 0.2 : -0.2))) * 10) / 10;
+    await chrome.storage.local.set({ rate });
+    const words = rate === settings.rate ? `This is already the ${kind === 'faster' ? 'fastest' : 'slowest'} speed.` : `${kind === 'faster' ? 'Faster' : 'Slower'}: speed ${rate}.`;
+    chrome.tts.stop();
+    speak(words, { rate, voiceName: settings.voiceName });
+    return { answer: words };
+  }
+  return null;
+}
+
 async function answerQuestion(question) {
+  const quick = QUICK.find(([, re]) => re.test(question.trim()));
+  if (quick) return quickCommand(quick[0]);
   lastManualActivity = Date.now();
   autoSpeech = null;
   const settings = await getSettings();
@@ -1576,6 +1632,8 @@ async function answerQuestion(question) {
       quote: result.quote || '',
       about: `${question} ${result.answer}`,
       numbers: (result.answer.match(/\d[\d.,:/]*\d|\d{2,}/g) || []).filter((n) => !missing.includes(n)),
+      bigLine: settings.bigLine,
+      textSize: settings.textSize,
     }).catch(() => null);
     trace('show me where:', JSON.stringify(result.quote), '->', JSON.stringify(shown));
     // What was pressed or tried, said about the page it happened on.
@@ -1856,6 +1914,15 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       .then(sendResponse)
       .catch((err) => sendResponse({ answer: 'Something went wrong.', error: true, detail: String(err) }));
     return true; // async response
+  }
+  if (msg.type === 'websight-say-this') {
+    getSettings().then((settings) => speak(msg.text, { rate: settings.rate, voiceName: settings.voiceName }));
+    sendResponse({ ok: true });
+    return false;
+  }
+  if (msg.type === 'websight-quick') {
+    quickCommand(msg.command).then(sendResponse, () => sendResponse(null));
+    return true;
   }
   if (msg.type === 'websight-stop-speech') {
     chrome.tts.stop();

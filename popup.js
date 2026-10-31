@@ -449,14 +449,70 @@ async function restoreConversation() {
 }
 
 let openedAt = Date.now();
+const sayEl = document.getElementById('say');
 
-chrome.runtime.onMessage.addListener((msg) => {
+// Text size and colours, for people with some sight (Settings, section 5).
+function applyDisplay({ textSize = 1, colours = 'dark' }) {
+  document.documentElement.style.fontSize = `${15 * textSize}px`;
+  document.documentElement.dataset.colours = colours;
+}
+chrome.storage.local.get({ textSize: 1, colours: 'dark' }).then(applyDisplay);
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && (changes.textSize || changes.colours)) chrome.storage.local.get({ textSize: 1, colours: 'dark' }).then(applyDisplay);
+});
+
+const SHORTCUTS =
+  'Shortcuts. From any page: Alt Shift S to talk, and again to send. Alt Shift N, new conversation. Alt Shift R, repeat. Alt Shift Period, stop speaking. ' +
+  'In this panel: Escape stops speaking. Alt Shift Up arrow, speak faster; Alt Shift Down arrow, slower. Alt Shift Plus, bigger text; Alt Shift Minus, smaller. Alt Shift H, this list. ' +
+  'You can also just say: repeat, slower, faster, or stop.';
+
+function quick(command) {
+  chrome.runtime.sendMessage({ type: 'websight-quick', command }).then((r) => r && r.answer && setStatus(r.answer)).catch(() => {});
+}
+
+// The same sizes as in Settings.
+const SIZES = [1, 1.25, 1.5, 2, 2.5, 3];
+async function changeTextSize(step) {
+  const { textSize = 1 } = await chrome.storage.local.get('textSize');
+  const at = SIZES.findIndex((x) => x >= textSize);
+  const next = SIZES[Math.min(SIZES.length - 1, Math.max(0, (at < 0 ? SIZES.length - 1 : at) + step))];
+  await chrome.storage.local.set({ textSize: next });
+  setStatus(`Text size ${Math.round(next * 100)} percent.`);
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !listening) {
+    chrome.runtime.sendMessage({ type: 'websight-stop-speech' }).catch(() => {});
+    return;
+  }
+  if (!(e.altKey && e.shiftKey)) return;
+  const act = { ArrowUp: () => quick('faster'), ArrowDown: () => quick('slower'), Equal: () => changeTextSize(1), Minus: () => changeTextSize(-1), KeyH: () => {
+    setStatus('Shortcuts are listed below the box.');
+    document.getElementById('hint').textContent = SHORTCUTS;
+    chrome.runtime.sendMessage({ type: 'websight-say-this', text: SHORTCUTS }).catch(() => {});
+  } }[e.code];
+  if (act) {
+    e.preventDefault();
+    act();
+  }
+});
+
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   // The hotkey pressed while the panel is already open. The press that
   // opened it is already handled by init.
   if (msg.type === 'websight-talk' && Date.now() - openedAt > 1000) {
     questionInput.focus();
     talk();
   }
+  // Said by WebSight, for the screen reader to read (Settings: answers
+  // read by my screen reader).
+  if (msg.type === 'websight-say') {
+    sayEl.textContent = '';
+    setTimeout(() => (sayEl.textContent = msg.text), 50);
+    sendResponse({ ok: true });
+    return;
+  }
+  if (msg.type === 'websight-quick-done' && msg.answer) setStatus(msg.answer);
   if (msg.type === 'websight-new-conversation') {
     transcriptEl.innerHTML = '';
     setStatus('New conversation. Press Talk or Alt+Shift+S to ask.');

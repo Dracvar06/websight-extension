@@ -173,7 +173,40 @@
     return best;
   }
 
-  function showLine(quote, numbers, about) {
+  // The line an answer came from, made easy to find for someone with some
+  // sight: a thick yellow ring with a black edge (visible on any colours),
+  // kept until the next answer. Optionally the line is also shown in large
+  // text in a strip at the bottom of the screen; the screen reader ignores
+  // the strip and reads the line itself.
+  let marked = null;
+  function markLine(el, bigLine, textSize) {
+    if (marked) {
+      marked.el.style.outline = marked.outline;
+      marked.el.style.boxShadow = marked.shadow;
+      marked.el.style.outlineOffset = marked.offset;
+    }
+    marked = { el, outline: el.style.outline, shadow: el.style.boxShadow, offset: el.style.outlineOffset };
+    el.style.outline = '5px solid #ffd400';
+    el.style.outlineOffset = '3px';
+    el.style.boxShadow = '0 0 0 11px #000';
+    document.getElementById('websight-big-line')?.remove();
+    if (!bigLine) return;
+    const strip = document.createElement('div');
+    strip.id = 'websight-big-line';
+    strip.setAttribute('aria-hidden', 'true');
+    strip.textContent = el.innerText.replace(/\s+/g, ' ').trim().slice(0, 400);
+    strip.style.cssText = `position:fixed;left:0;right:0;bottom:0;z-index:2147483647;max-height:45vh;overflow:auto;padding:16px 20px;background:#000;color:#ffd400;border-top:5px solid #ffd400;font:600 ${Math.round(28 * (textSize || 1))}px/1.35 system-ui,sans-serif;`;
+    const close = () => {
+      strip.remove();
+      document.removeEventListener('keydown', onKey, true);
+    };
+    const onKey = (e) => e.key === 'Escape' && close();
+    strip.addEventListener('click', close);
+    document.addEventListener('keydown', onKey, true);
+    document.documentElement.appendChild(strip);
+  }
+
+  function showLine(quote, numbers, about, bigLine, textSize) {
     const context = new Set([...wordsOf(about)].filter((w) => w.length >= 2 && !STOP.has(w)));
     let el = null;
     const q = squash(quote);
@@ -201,9 +234,7 @@
     if (el.tabIndex < 0 && !el.hasAttribute('tabindex')) el.setAttribute('tabindex', '-1');
     el.scrollIntoView({ block: 'center', behavior: 'instant' });
     el.focus({ preventScroll: true });
-    const before = el.style.outline;
-    el.style.outline = '4px solid #f5a623';
-    setTimeout(() => (el.style.outline = before), 8000);
+    markLine(el, bigLine, textSize);
     return { ok: true, text: el.innerText.replace(/\s+/g, ' ').trim().slice(0, 200) };
   }
 
@@ -219,7 +250,7 @@
       } else if (msg.type === 'websight-title') {
         sendResponse({ title: document.title });
       } else if (msg.type === 'websight-show') {
-        sendResponse(showLine(msg.quote || '', msg.numbers || [], msg.about || ''));
+        sendResponse(showLine(msg.quote || '', msg.numbers || [], msg.about || '', msg.bigLine, msg.textSize));
       } else if (msg.type === 'websight-snapshot') {
         sendResponse(window.__websight.snapshot());
       } else if (msg.type === 'websight-scan-info') {

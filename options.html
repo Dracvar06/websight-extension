@@ -197,7 +197,36 @@
     <p class="note" id="voice-note">Automatic picks a system voice matching the answer's language, avoiding the low-quality novelty ones. Nicer system voices can be installed under macOS Settings, Accessibility, Spoken Content; then reopen this page.</p>
   </details>
 
-  <h2>5. Finding pages on a site</h2>
+  <h2>5. Seeing the screen</h2>
+  <p class="note">For people with some sight, and for the choice of who reads answers aloud.</p>
+  <label for="textSize">Text size in the WebSight panel</label>
+  <select id="textSize">
+    <option value="1">Normal</option>
+    <option value="1.25">Large (125%)</option>
+    <option value="1.5">Larger (150%)</option>
+    <option value="2">Very large (200%)</option>
+    <option value="2.5">Huge (250%)</option>
+    <option value="3">Maximum (300%)</option>
+  </select>
+  <label for="colours">Colours of the panel</label>
+  <select id="colours">
+    <option value="dark">Dark: light text on dark grey</option>
+    <option value="light">Light: dark text on white</option>
+    <option value="contrast">High contrast: white and yellow on black</option>
+  </select>
+  <label for="bigLine" style="font-weight:600;">
+    <input type="checkbox" id="bigLine" style="width:auto; margin-right:8px;">
+    Also show the answer's line in large text at the bottom of the page
+  </label>
+  <p class="note">The line an answer came from always gets a thick yellow and black outline and is scrolled to the middle of the screen. With this on, it is also shown in a large yellow-on-black strip; press Escape or click it to close.</p>
+  <label for="voiceOutput">Who reads the answers aloud</label>
+  <select id="voiceOutput" aria-describedby="output-note">
+    <option value="voice">WebSight's voice (section 4)</option>
+    <option value="screenreader">My screen reader (VoiceOver, NVDA, JAWS)</option>
+  </select>
+  <p class="note" id="output-note">With "My screen reader", answers appear in the WebSight panel for your screen reader to read, with its own voice and speed. When the panel is closed, WebSight's voice is used.</p>
+
+  <h2>6. Finding pages on a site</h2>
   <label for="searchEngine">Search engine</label>
   <select id="searchEngine" aria-describedby="search-note">
     <option value="searxng">SearXNG on this computer - free, private, no key</option>
@@ -216,14 +245,14 @@
     <input type="password" id="searchKey" autocomplete="off">
   </details>
 
-  <h2>6. Behaviour</h2>
+  <h2>7. Behaviour</h2>
   <label for="autoDescribe" style="font-weight:600;">
     <input type="checkbox" id="autoDescribe" style="width:auto; margin-right:8px;">
     Describe each page when it loads
   </label>
   <p class="note">On every new page you hear a short description: what the page is and the two or three most useful things on it. The page is never scrolled.</p>
 
-  <h2>7. Keyboard shortcuts</h2>
+  <h2>8. Keyboard shortcuts</h2>
   <ul id="shortcut-status" aria-live="polite"></ul>
   <p class="note">If a shortcut says NOT ASSIGNED, Chrome dropped it (usually a conflict with another extension). Assign it at chrome://extensions/shortcuts: find WebSight, click the empty box and press the keys you want. On a Mac, Alt is the Option key.</p>
 

@@ -67,6 +67,16 @@ version:
 - Follow-up questions keep context: the conversation for the current tab is
   remembered as you move between pages in that tab, and the panel shows the
   conversation of whichever tab is in front.
+- Say **"repeat that"**, **"slower"**, **"faster"** or **"stop"** for an
+  instant response, no AI involved. Shortcuts: **Alt+Shift+R** repeats,
+  **Alt+Shift+Period** stops speaking; in the panel, Escape stops speaking,
+  Alt+Shift+Up/Down changes the speed, Alt+Shift+Plus/Minus the text size,
+  and Alt+Shift+H lists every shortcut.
+- For people with some sight (Settings, section 5): panel text up to 300%,
+  light, dark or high-contrast colours, and the answer's line outlined in
+  yellow and black, optionally repeated in large text at the bottom of the
+  page. Answers can also be left to the person's own screen reader instead
+  of WebSight's voice.
 - Press **Alt+Shift+N** to start a NEW conversation on the current page:
   it wipes that tab's history and opens the panel fresh.
 - The AI reads the whole page's text, below the fold included, plus a

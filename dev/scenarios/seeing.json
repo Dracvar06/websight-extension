@@ -1,0 +1,2 @@
+{ "url": "fixture:shop.html", "settings": { "textSize": 2, "colours": "contrast", "bigLine": true }, "screenshot": true,
+  "questions": ["How much does the cheapest item cost?", "repeat that", "slower", "stop"] }

@@ -40,6 +40,24 @@
         "default": "Alt+Shift+N"
       },
       "description": "Start a new WebSight conversation on this page"
+    },
+    "repeat": {
+      "suggested_key": {
+        "default": "Alt+Shift+R"
+      },
+      "description": "Repeat what WebSight last said"
+    },
+    "stop": {
+      "suggested_key": {
+        "default": "Alt+Shift+Period"
+      },
+      "description": "Stop WebSight speaking"
+    },
+    "slower": {
+      "description": "Speak slower"
+    },
+    "faster": {
+      "description": "Speak faster"
     }
   },
   "options_page": "options.html"

@@ -166,7 +166,7 @@ async function main() {
       }).catch((err) => '(could not read: ' + err.message + ')');
 
     if (scenario) {
-      await sw.evaluate(() => chrome.storage.local.set({ speechEngine: 'browser' }));
+      await sw.evaluate((extra) => chrome.storage.local.set({ speechEngine: 'browser', ...extra }), scenario.settings || {});
       for (const question of scenario.questions) {
         const popup = await openPopup();
         await sleep(300);
@@ -188,6 +188,7 @@ async function main() {
           said = now;
         }
         if (answer === '(popup closed)') answer = said.join(' ');
+        if (scenario.screenshot) await popup.screenshot({ path: join(root, 'dev', 'results', 'panel.png') }).catch(() => {});
         await popup.close().catch(() => {});
         await sleep(3000); // a click may be loading a new page
         const text = await pageText();
@@ -198,6 +199,8 @@ async function main() {
           return el && el !== document.body ? el.innerText.replace(/\s+/g, ' ').trim().slice(0, 160) : '';
         }).catch(() => '');
         console.log('  focus on page:', JSON.stringify(focused));
+        const strip = await page.evaluate(() => document.getElementById('websight-big-line')?.textContent || '').catch(() => '');
+        if (strip) console.log('  large-text strip:', JSON.stringify(strip.slice(0, 120)));
         const remembered = await sw.evaluate(async () => {
           const all = await chrome.storage.session.get(null);
           return Object.entries(all).filter(([k]) => k.startsWith('tab:')).map(([k, v]) => `${k}=${v.history.length}`).join(' ');

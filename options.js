@@ -13,6 +13,10 @@ const DEFAULTS = {
   ollamaUrl: 'http://localhost:11434',
   ollamaModel: 'gemma4:e4b',
   rate: 1.4,
+  textSize: 1,
+  colours: 'dark',
+  bigLine: false,
+  voiceOutput: 'voice',
   voiceName: '',
   autoDescribe: true,
   ttsEngine: 'neural',
@@ -35,7 +39,7 @@ const DEFAULTS = {
 };
 
 const el = {};
-for (const id of ['provider', 'geminiKey', 'geminiModel', 'deepseekKey', 'deepseekModel', 'ollamaUrl', 'ollamaModel', 'rate', 'voiceName', 'ttsEngine', 'ttsUrl', 'speechEngine', 'speechLang', 'whisperUrl', 'whisperKey', 'whisperModel', 'aboutMe', 'searchEngine', 'searchUrl', 'searchKey', 'claudeKey', 'claudeModel', 'compatService', 'compatUrl', 'compatKey', 'compatModel']) {
+for (const id of ['provider', 'geminiKey', 'geminiModel', 'deepseekKey', 'deepseekModel', 'ollamaUrl', 'ollamaModel', 'rate', 'voiceName', 'ttsEngine', 'ttsUrl', 'speechEngine', 'speechLang', 'whisperUrl', 'whisperKey', 'whisperModel', 'aboutMe', 'searchEngine', 'searchUrl', 'searchKey', 'claudeKey', 'claudeModel', 'compatService', 'compatUrl', 'compatKey', 'compatModel', 'textSize', 'colours', 'voiceOutput']) {
   el[id] = document.getElementById(id);
 }
 const rateValueEl = document.getElementById('rate-value');
@@ -74,6 +78,7 @@ async function load() {
   if (/^gemini-(2\.5|3\.5)-flash$/.test(s.geminiModel)) s.geminiModel = 'gemini-3.8-flash';
   for (const id of Object.keys(el)) el[id].value = s[id];
   document.getElementById('autoDescribe').checked = Boolean(s.autoDescribe);
+  document.getElementById('bigLine').checked = Boolean(s.bigLine);
   rateValueEl.textContent = Number(s.rate).toFixed(1) + 'x';
   showChosenProvider();
 }
@@ -98,6 +103,10 @@ function save() {
       rate: Number(el.rate.value),
       voiceName: el.voiceName.value,
       autoDescribe: document.getElementById('autoDescribe').checked,
+      bigLine: document.getElementById('bigLine').checked,
+      textSize: Number(el.textSize.value) || 1,
+      colours: el.colours.value,
+      voiceOutput: el.voiceOutput.value,
       ttsEngine: el.ttsEngine.value,
       ttsUrl: el.ttsUrl.value.trim() || DEFAULTS.ttsUrl,
       speechEngine: el.speechEngine.value,
@@ -124,6 +133,8 @@ function save() {
 for (const id of Object.keys(el)) el[id].addEventListener('input', save);
 el.provider.addEventListener('change', showChosenProvider);
 document.getElementById('autoDescribe').addEventListener('change', save);
+document.getElementById('bigLine').addEventListener('change', save);
+for (const id of ['textSize', 'colours', 'voiceOutput']) el[id].addEventListener('change', save);
 
 el.rate.addEventListener('input', () => {
   rateValueEl.textContent = Number(el.rate.value).toFixed(1) + 'x';
@@ -269,15 +280,22 @@ async function checkShortcuts() {
   const labels = {
     _execute_action: 'Talk (continue the conversation)',
     'new-conversation': 'New conversation',
+    repeat: 'Repeat what it last said',
+    stop: 'Stop speaking',
+    slower: 'Speak slower (or say "slower")',
+    faster: 'Speak faster (or say "faster")',
   };
   const commands = await chrome.commands.getAll();
   for (const c of commands) {
     const li = document.createElement('li');
     const name = labels[c.name] || c.name;
+    const optional = c.name === 'slower' || c.name === 'faster';
     li.textContent = c.shortcut
       ? `${name}: ${c.shortcut}`
-      : `${name}: NOT ASSIGNED. Set it at chrome://extensions/shortcuts`;
-    if (!c.shortcut) li.style.color = '#a00';
+      : optional
+        ? `${name}: no shortcut yet; you can set one at chrome://extensions/shortcuts`
+        : `${name}: NOT ASSIGNED. Set it at chrome://extensions/shortcuts`;
+    if (!c.shortcut && !optional) li.style.color = '#a00';
     listEl.appendChild(li);
   }
 }
