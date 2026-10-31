@@ -202,6 +202,8 @@ async function main() {
           return Object.entries(all).filter(([k]) => k.startsWith('tab:')).map(([k, v]) => `${k}=${v.history.length}`).join(' ');
         });
         console.log('  conversation turns stored:', remembered);
+        const sent = await page.evaluate(() => ({ sent: window.__sent || 0, email: document.querySelector('#email')?.value, pw: document.querySelector('#pw')?.value })).catch(() => null);
+        if (sent && (sent.sent || sent.email || sent.pw)) console.log('  form state:', JSON.stringify(sent));
         results.steps.push({ step: 'question', question, answer, said, focused, seconds, url: page.url(), pageTextChars: text.length, pageText: text });
         console.log(`Q: ${question}\n  said: ${said.join(' | ')}\n  A: ${answer} (${seconds.toFixed(1)} s, now on ${page.url()}, page text ${text.length} chars)`);
       }

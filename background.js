@@ -1090,10 +1090,17 @@ async function handleAsk(question) {
   // actually did, never by the model: a model's "I've clicked Buy now"
   // while the app is still waiting for a yes is exactly the kind of words a
   // person who cannot see the screen has no way to check.
-  if (target && DANGEROUS.test(target.name)) {
+  const risk = await assessRisk(result.action, target, provider, extraction.pageText);
+  trace('risk:', target && target.name, '->', JSON.stringify(risk));
+  if (risk.level === 'refuse') {
+    await setTabState(tab.id, state);
+    speak(risk.why, { rate: settings.rate, voiceName: settings.voiceName });
+    return { answer: risk.why };
+  }
+  if (risk.level === 'ask') {
     state.pendingAction = result.action;
     await setTabState(tab.id, state);
-    const warning = `That would ${verbFor(result.action)} "${target.name}", which might buy, send or delete something. Nothing has been pressed yet. Press the hotkey and say yes to go ahead, or anything else to cancel.`;
+    const warning = `That would ${verbFor(result.action)} "${target ? target.name : 'that'}", which ${risk.why}. Nothing has been pressed yet. Press the hotkey and say yes to go ahead, or anything else to cancel.`;
     speak(warning, { rate: settings.rate, voiceName: settings.voiceName });
     return { answer: warning, pendingConfirmation: true };
   }
@@ -1101,6 +1108,52 @@ async function handleAsk(question) {
   await setTabState(tab.id, state);
   return performAction(tab, result.action, settings, state);
 }
+
+// Whether an action needs a yes first, in the spirit of a permission
+// check: clear rules decide most cases at once; a button whose name says
+// nothing ("Continue", "OK", "Save") is put to the model as a narrow
+// question about this page. Reading, following links, opening tabs,
+// scrolling and going back never need asking.
+const UNCLEAR = /^(ok|okay|continue|next|confirm|done|save|apply|yes|go|proceed|finish|complete|update|accept|agree|submit|send|place|enviar|continuar|aceptar|guardar|confirmar|seg[uü]ent|desa|d'acord)\b/i;
+const ACTS_BY_ADDRESS = /log ?out|sign ?out|unsubscribe|delete|remove|cancel|deactivate/i;
+
+async function assessRisk(action, target, provider, pageText) {
+  if (!target || ['scroll', 'back', 'reveal', 'explore'].includes(action.type)) return { level: 'safe' };
+  if (action.type === 'fill' || action.type === 'focus') {
+    if (target.sensitive && action.type === 'fill') {
+      return { level: 'refuse', why: `I do not type ${target.sensitive === 'card' ? 'card numbers' : 'passwords'}. I have not touched that field; please type it yourself.` };
+    }
+    return { level: 'safe' }; // typing sends nothing by itself
+  }
+  if (DANGEROUS.test(target.name)) return { level: 'ask', why: 'might buy, send or delete something' };
+  if (target.href) {
+    return ACTS_BY_ADDRESS.test(target.href + ' ' + target.name) ? { level: 'ask', why: 'might sign you out or remove something' } : { level: 'safe' };
+  }
+  if (target.submits && target.searchForm) return { level: 'safe' };
+  if (target.submits || UNCLEAR.test(target.name.trim())) {
+    // The narrow question, text only, answered with a strict shape.
+    const verdict = await provider
+      .ask({
+        history: [],
+        question: `(Note from the app, a safety check. On this page, could pressing "${target.name}"${target.submits ? ` (it sends a form with: ${target.form || 'unknown fields'})` : ' (it is not part of any form, so it sends nothing by itself)'} buy or pay for something, send a message or application, post publicly, delete or cancel something, or change account settings? Set "risky" to true if it could, false if it only moves through or shows content. In "why", a few words.)`,
+        pageText: pageText.slice(0, 6000),
+        screenshotBase64: '',
+        schema: RISK_SCHEMA,
+      })
+      .catch(() => null);
+    if (!verdict || verdict.risky !== false) {
+      const reason = verdict && verdict.why ? verdict.why.replace(/[.]$/, '') : '';
+      return { level: 'ask', why: target.submits ? 'would send this form' : `I am not sure is safe to press without asking${reason ? ` (${reason[0].toLowerCase()}${reason.slice(1)})` : ''}` };
+    }
+  }
+  return { level: 'safe' };
+}
+
+const RISK_SCHEMA = {
+  type: 'object',
+  properties: { risky: { type: 'boolean' }, why: { type: 'string' }, answer: { type: 'string' } },
+  required: ['risky', 'why', 'answer'],
+};
 
 function verbFor(action) {
   return { click: 'press', focus: 'move to', fill: 'type into', back: 'go back' }[action.type] || action.type;
@@ -1212,8 +1265,17 @@ async function performAction(tab, action, settings, state) {
       const shown = added.slice(0, 8);
       spoken = `That opened ${added.length} new option${added.length === 1 ? '' : 's'}: ${quoteList(shown)}${added.length > shown.length ? ', and more' : ''}.`;
     } else {
-      earcon('nothing');
-      spoken = `I pressed "${name}", but I cannot see anything change on the page.`;
+      // No new buttons or links, but the text may have changed ("Step 2 of
+      // 3"); say what is new rather than "nothing changed".
+      const oldLines = new Set(before ? before.lines || [] : []);
+      const newLines = (after.lines || []).filter((l) => !oldLines.has(l));
+      if (newLines.length) {
+        earcon('opened');
+        spoken = `That changed the page. It now says: ${newLines.slice(0, 2).join('. ').slice(0, 300)}`;
+      } else {
+        earcon('nothing');
+        spoken = `I pressed "${name}", but I cannot see anything change on the page.`;
+      }
     }
   }
   say(spoken, { enqueue: true });

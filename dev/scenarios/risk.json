@@ -1,0 +1,1 @@
+{ "url": "fixture:form.html", "questions": ["Put test@example.com in the email field.", "Type hunter2 in the password field.", "Press Continue.", "no", "Sign me out.", "no", "Click Next."] }

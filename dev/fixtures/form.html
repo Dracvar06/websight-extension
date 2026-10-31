@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Account - Westfield College</title></head>
+<body>
+<header>
+  <form role="search" action="/search" method="get">
+    <label for="q">Search the site</label> <input id="q" name="q" type="search">
+    <button>Search</button>
+  </form>
+  <a href="/logout">Sign out</a>
+</header>
+<main>
+  <h1>Newsletter and account</h1>
+  <form id="news" action="/subscribe" method="post" onsubmit="event.preventDefault(); window.__sent = (window.__sent || 0) + 1;">
+    <label for="email">Email</label> <input id="email" type="email" name="email">
+    <label for="pw">Password</label> <input id="pw" type="password" name="pw">
+    <button>Continue</button>
+  </form>
+  <h2>Course tour</h2>
+  <p id="step">Step 1 of 3: Welcome.</p>
+  <button type="button" onclick="document.getElementById('step').textContent = 'Step 2 of 3: Choosing courses.'">Next</button>
+</main>
+</body>
+</html>
