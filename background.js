@@ -5,7 +5,7 @@ import { getProvider } from './lib/provider.js';
 import { unverifiedNumbers, numbersNote } from './lib/check-numbers.js';
 import { pickLinks, bestPassages, terms, siteOf } from './lib/scout.js';
 import { siteRequest, pageRequest, pickOfficialSite } from './lib/sites.js';
-import { searchRequest, parseResults, onSite, sitemapEntries, rankUrls, splitNameAndPage, nameFromUrl } from './lib/web-search.js';
+import { searchRequest, parseResults, onSite, sitemapEntries, rankUrls, nameFromUrl } from './lib/web-search.js';
 
 const DEFAULT_SETTINGS = {
   provider: 'gemini',
@@ -677,7 +677,22 @@ async function goToPageOnSite(tab, phrase, settings, state, host = new URL(tab.u
   const say = (text) => speak(text, { rate: settings.rate, voiceName: settings.voiceName });
   earcon('working');
   const found = await findOnSite(host, phrase, settings);
-  const best = found.find((r) => sansHash(r.url) !== sansHash(tab.url || ''));
+  // A search always returns something; only a result about what they asked
+  // counts (at least half their words), or it is left to the AI to work out.
+  const wanted = [...new Set(terms(phrase))];
+  const about = (r) => {
+    let path = '';
+    try {
+      path = decodeURIComponent(new URL(r.url).pathname);
+    } catch {
+      /* keep empty */
+    }
+    const words = terms(`${r.title} ${path} ${r.snippet}`);
+    const hits = wanted.filter((w) => words.some((x) => x === w || (Math.min(w.length, x.length) > 4 && (x.startsWith(w) || w.startsWith(x))))).length;
+    return hits && hits * 2 >= wanted.length;
+  };
+  const best = found.find((r) => sansHash(r.url) !== sansHash(tab.url || '') && about(r));
+  trace('relevant result for', JSON.stringify(phrase), '->', best ? best.url : 'none');
   if (!best) return null;
   const title = best.title || (await pageTitle(best.url)) || nameFromUrl(best.url);
   const words = `Going to "${title.slice(0, 120)}", on ${siteOf(new URL(best.url).host)}. Say go back if it is not the one.`;
@@ -771,11 +786,13 @@ const SITE_WORDS_ANY = /\b(site|website|web ?site|web|home ?page|p[aà]gina)\b/i
 // A small model sometimes answers "going to another website" with words and
 // no action. Asked only that, narrowly, it names the organisation reliably.
 async function whichSite(provider, question, here = '') {
-  if (!GO_WORDS.test(question) || !SITE_WORDS_ANY.test(question)) return null;
+  // On a page, any "take me to" may mean another website ("take me to UCSB
+  // admissions" on a food co-op's site); on a new tab only one said to be.
+  if (!GO_WORDS.test(question) || !(here || SITE_WORDS_ANY.test(question))) return null;
   const r = await provider
     .ask({
       history: [],
-      question: `(Note from the app: does this request ask to go to some organisation's website?${here ? ` They are on ${here} now; a page of this same site is not another website, so then action null.` : ''} If yes, return {"type": "site", "value": "<the organisation's usual name, in English if it has one>", "page": "<a page on it they asked for, or empty>"}. If not, action null. Request: "${question}")`,
+      question: `(Note from the app: does this request ask to go to some organisation's website, or to a page of another organisation's website?${here ? ` They are on ${here} now; if what they want could be a page of this same site, action null.` : ''} If yes, return {"type": "site", "value": "<the organisation's usual name, in English if it has one>", "page": "<a page on it they asked for, or empty>"}. If not, action null. Request: "${question}")`,
       pageText: '',
       screenshotBase64: '',
     })
@@ -784,7 +801,7 @@ async function whichSite(provider, question, here = '') {
   return r && r.action && r.action.type === 'site' ? r.action : null;
 }
 
-async function actElsewhere(tab, action, question, settings, provider, state) {
+async function actElsewhere(tab, action, question, settings, provider, state, askFirst = false) {
   trace('understood as', JSON.stringify(action));
   if (action.type === 'remember') return rememberFact(action.value, settings);
   if (action.type === 'websearch' && !/\b(search|google|look\s*up|find|busca|cerca|buscar|cercar|investiga)\b/i.test(question)) {
@@ -804,7 +821,7 @@ async function actElsewhere(tab, action, question, settings, provider, state) {
   const plain = (t) => t.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   const said = plain(question);
   const theirWords = (plain(action.value).match(/[a-z0-9]+/g) || []).every((w) => said.includes(w));
-  return goToSite(tab, { kind: 'name', name: action.value, page: action.page, heard: theirWords ? undefined : question.trim() }, settings, provider, state);
+  return goToSite(tab, { kind: 'name', name: action.value, page: action.page, asked: question.trim(), askFirst, heard: theirWords ? undefined : question.trim() }, settings, provider, state);
 }
 
 function pickSaidOption(question, options, elements) {
@@ -835,14 +852,45 @@ function noteDown(state, line) {
   state.notes = [...(state.notes || []), `- ${line}`].slice(-12);
 }
 
+// Any website, the way a chatbot finds one: search the web for it, then
+// the AI chooses among the real results. It only picks a number; it never
+// writes an address.
+async function siteBySearch(name, question, settings, provider) {
+  const engine = settings.searchEngine || 'searxng';
+  if (engine === 'sitemap' || ((engine === 'tavily' || engine === 'brave') && !settings.searchKey)) return null;
+  const req = searchRequest(engine, { site: '', phrase: `${name} official website`, key: settings.searchKey, url: settings.searchUrl });
+  const json = await fetchJson(req.url, 8000, req.init);
+  const results = parseResults(engine, json)
+    .filter((r) => !/\.(pdf|docx?|xlsx?|pptx?)(\?|$)/i.test(r.url))
+    .slice(0, 8);
+  trace('web search for the site of', JSON.stringify(name), '->', results.length, json ? '' : '(no answer)');
+  if (!results.length) return null;
+  const list = results.map((r, i) => `${i + 1}. ${new URL(r.url).host} | ${r.title} | ${r.snippet.slice(0, 160)}`).join('\n');
+  const r = await provider
+    .ask({
+      history: [],
+      question: `(Note from the app: they asked "${question}". These are web search results for "${name}":\n${list}\nWhich one is the official website of what they mean: the organisation's, person's or service's own site, not news, Wikipedia, directories, reviews or social media? Put only its number in "answer", then the word "sure" or "unsure". Answer "0" if none of them is.)`,
+      pageText: '',
+      screenshotBase64: '',
+    })
+    .catch(() => null);
+  const said = (r && r.answer) || '';
+  const n = Number((said.match(/\d+/) || ['0'])[0]);
+  trace('chosen result ->', JSON.stringify(said));
+  if (!n || n > results.length) return null;
+  const hit = results[n - 1];
+  return { url: hit.url, host: new URL(hit.url).host, title: hit.title, unsure: /unsure|not sure/i.test(said) };
+}
+
 async function goToSite(tab, site, settings, provider, state) {
   const say = (text) => speak(text, { rate: settings.rate, voiceName: settings.voiceName });
   const go = async (url, words) => {
-    if (site.heard && !site.confirmed) {
-      // Said without "take me to", maybe misheard: a yes first.
+    if ((site.heard || site.askFirst) && !site.confirmed) {
+      // Maybe misheard, or worked out rather than said: a yes first, so
+      // nobody is moved to another website unexpectedly.
       state.pendingAction = { type: 'goto', url, name: site.name };
       await setTabState(tab.id, state);
-      const msg = `I heard "${site.heard}". ${words.replace(/^Going to /, 'Do you want ').replace(/\.$/, '')}? Say yes to go there.`;
+      const msg = `${site.heard ? `I heard "${site.heard}". ` : ''}${words.replace(/^Going to /, 'Do you want ').replace(/ Say go back if it is not the one\.$/, '').replace(/\.$/, '')}? Say yes to go there.`;
       say(msg);
       return { answer: msg, pendingConfirmation: true };
     }
@@ -891,20 +939,25 @@ async function goToSite(tab, site, settings, provider, state) {
     }
     return go(official.url, `Going to ${host}, the official website of ${official.label}${what ? ` (${what})` : ''}, according to Wikidata.`);
   }
-  // "UCSB undergraduate admissions": the organisation, then a page on its
-  // official site, found by search there and nowhere else.
-  if (!official || official.unsure) {
-    for (const split of splitNameAndPage(site.name).slice(0, 3)) {
-      const org = await officialSite(split.name);
-      trace('official site for', split.name, '->', JSON.stringify(org && { url: org.url, unsure: org.unsure }));
-      if (!org || org.unsure) continue;
-      // "Caprabo supermarket": the rest only says what Caprabo is.
-      if (site.heard || KIND_OF_PLACE.test(split.page)) return go(org.url, `Going to ${org.host}, the official website of ${org.label}.`);
-      say(`Looking for ${split.page} on ${org.host}, the official website of ${org.label}.`);
-      const went = await goToPageOnSite(tab, split.page, settings, state, org.host);
-      if (went) return went;
-      return go(org.url, `I could not find ${split.page} there, so I am going to the home page of ${org.host}.`);
+  // Not in Wikidata (a shop, a department, a club): a web search, as a
+  // chatbot would. Gone to straight away when the AI is sure, with the
+  // address said aloud; asked first otherwise.
+  const found = await siteBySearch(site.name, site.heard || site.asked || site.name, settings, provider);
+  if (found) {
+    const agrees = official && siteOf(new URL(official.url).host) === siteOf(found.host);
+    if (!found.unsure || agrees) {
+      if (site.page && !site.heard && !KIND_OF_PLACE.test(site.page)) {
+        say(`Looking for ${site.page} on ${found.host}.`);
+        const went = await goToPageOnSite(tab, site.page, settings, state, found.host);
+        if (went) return went;
+      }
+      return go(found.url, `Going to ${found.host}${found.title ? `, "${found.title.slice(0, 80)}"` : ''}, which a web search found for ${site.name}. Say go back if it is not the one.`);
     }
+    state.pendingAction = { type: 'goto', url: found.url, name: site.name };
+    await setTabState(tab.id, state);
+    const msg = `I am not sure which website you mean. A web search found ${found.host}${found.title ? `, "${found.title.slice(0, 80)}"` : ''}. Say yes to go there, or say the name another way.`;
+    say(msg);
+    return { answer: msg, pendingConfirmation: true };
   }
   // Not confirmed: the model's guess, checked by loading it, and only
   // with a yes. Lookalike sites are exactly what this must not land on.
@@ -974,7 +1027,7 @@ async function answerQuestion(question) {
 
   // "Take me to the UChicago website" works anywhere, a new tab included.
   const site = !state.pendingAction && siteRequest(question, onWebPage);
-  if (site) return goToSite(tab, site, settings, provider, state);
+  if (site) return goToSite(tab, { ...site, asked: question.trim() }, settings, provider, state);
   // "Take me to the admissions page": search this site, as a chatbot
   // would, unless a link on this page plainly is it.
   const wantsPage = !site && onWebPage && !state.pendingAction && pageRequest(question);
@@ -1149,6 +1202,19 @@ async function answerQuestion(question) {
     // Said it would remember: then it really does.
     return rememberFact(question.replace(/^(?:please\s+|hey\s+|ok\s+|so\s+)*(?:(?:can|could) you\s+)?/i, ''), settings);
   }
+  // "You can click the link labeled 'Explore Undergraduate Programs'" is no
+  // help to someone who cannot see it. When they asked for something to be
+  // done and the answer names a control on this page, it is done for them,
+  // through the same safety checks as any other click.
+  if (result && !result.action && (!IS_QUESTION.test(question.trim()) || GO_WORDS.test(question))) {
+    const told = (result.answer || '').match(/\b(?:click|press|tap|select|choose|open|follow)\b[^.]*?["'‘“]([^"'’”]{2,80})["'’”]/i);
+    const name = told && told[1].trim().toLowerCase();
+    const el = name && extraction.elements.find((e) => e.name && e.name.trim().toLowerCase() === name);
+    if (el) {
+      trace('told them to click; doing it instead:', el.name);
+      result = { ...result, answer: `Opening "${el.name}".`, quote: '', action: { type: 'click', index: el.index } };
+    }
+  }
   if (result && !result.action && CLAIMS_ACTION.test(result.answer)) {
     console.warn('WebSight: dropped an answer claiming an action that was not taken:', result.answer);
     result = { answer: 'I have not done anything on the page. Could you say again what you would like me to do?', lang: result.lang, action: null };
@@ -1162,9 +1228,11 @@ async function answerQuestion(question) {
     return actElsewhere(tab, result.action, question, settings, provider, state);
   }
   // "Can you get me onto the Caprabo site?" is a request, question mark or not.
-  if (result && (!result.action || result.action.type === 'explore' || result.action.type === 'scroll')) {
-    const site = await whichSite(provider, question, /^https?:/.test(tab.url || "") ? new URL(tab.url).host : "");
-    if (site) return actElsewhere(tab, site, question, settings, provider, state);
+  if (result && (!result.action || ['explore', 'scroll', 'reveal'].includes(result.action.type))) {
+    const here = /^https?:/.test(tab.url || '') ? new URL(tab.url).host : '';
+    const site = await whichSite(provider, question, here);
+    // Leaving this site when they did not say "website" is asked first.
+    if (site) return actElsewhere(tab, site, question, settings, provider, state, Boolean(here) && !SITE_WORDS_ANY.test(question));
   }
   // A question is answered, never just clicked away from: "When does
   // winter quarter start?" once got a click on an unrelated event and
