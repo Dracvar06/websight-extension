@@ -187,11 +187,17 @@ document.getElementById('test-tts').addEventListener('click', async () => {
   }
 });
 
+// Plays the voice that answers will really use: the engine chosen above,
+// even before Save.
 document.getElementById('test-voice').addEventListener('click', () => {
-  chrome.tts.stop();
-  const opts = { rate: Number(el.rate.value) };
-  if (el.voiceName.value) opts.voiceName = el.voiceName.value;
-  chrome.tts.speak('This is how WebSight will sound at this speed.', opts);
+  chrome.runtime.sendMessage({
+    type: 'websight-test-voice',
+    text: 'This is how WebSight will sound at this speed.',
+    rate: Number(el.rate.value),
+    engine: el.ttsEngine.value,
+    url: el.ttsUrl.value.trim(),
+    voiceName: el.voiceName.value,
+  });
 });
 
 document.getElementById('mic-button').addEventListener('click', async () => {

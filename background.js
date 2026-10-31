@@ -1487,8 +1487,27 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return false;
   }
   if (msg.type === 'websight-tts-failed') {
-    // The neural server failed mid-utterance; recover with the system voice.
-    chrome.tts.speak(msg.text, { rate: msg.rate || 1.4 });
+    // The neural server failed mid-utterance; recover with a decent system
+    // voice, not whatever Chrome lands on.
+    pickVoice('en').then((voiceName) => chrome.tts.speak(msg.text, { rate: msg.rate || 1.4, ...(voiceName ? { voiceName } : {}) }));
+    sendResponse({ ok: true });
+    return false;
+  }
+  if (msg.type === 'websight-test-voice') {
+    (async () => {
+      chrome.tts.stop();
+      if (msg.engine === 'neural') {
+        try {
+          await ensureOffscreen();
+          const res = await chrome.runtime.sendMessage({ type: 'websight-tts-play', text: msg.text, lang: 'en', rate: msg.rate, url: msg.url });
+          if (res && res.ok) return;
+        } catch {
+          /* fall through to the system voice */
+        }
+      }
+      const voiceName = msg.voiceName || (await pickVoice('en'));
+      chrome.tts.speak(msg.text, { rate: msg.rate, ...(voiceName ? { voiceName } : {}) });
+    })();
     sendResponse({ ok: true });
     return false;
   }
